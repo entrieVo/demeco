@@ -36,7 +36,8 @@ export async function imageDataToBlob(
 	newData: Uint8ClampedArray
 ): Promise<Blob> {
 	const updatedImageData = new ImageData(
-		newData,
+		// eslint-disable-next-line @typescript-eslint/no-explicit-any
+		newData as any,
 		imageData.width,
 		imageData.height
 	);

@@ -1,10 +1,5 @@
-import {
-	imageDataToUrl,
-	fileToImageData,
-	imageDataToBlob,
-} from "./image-processing";
+import { fileToImageData, imageDataToBlob } from "./image-processing";
 import { normalDistribution } from "./probability_distribution";
-import { NOISE_TYPES } from "@/features/constants";
 
 // [SECTION/> Гауссов шум
 
@@ -13,9 +8,9 @@ export async function applyGaussianImageNoise(
 	sigma: number
 ): Promise<Blob> {
 	const imageData = await fileToImageData(file);
+	console.warn(typeof imageData.data);
 
-	const newData = new Uint8ClampedArray(imageData.data);
-	newData.set(gaussianNoise(newData, 0, sigma));
+	const newData = gaussianNoise(imageData.data, 0, sigma);
 
 	return await imageDataToBlob(imageData, newData);
 }
@@ -47,11 +42,13 @@ export async function applyColorImageNoise(
 ): Promise<Blob> {
 	const imageData = await fileToImageData(file);
 
-	const newData = new Uint8ClampedArray(imageData.data);
-	newData.set(
-		colorNoise(imageData, 0, sigma, sigmaBlur, 2 * Math.ceil(2 * sigmaBlur) + 1)
+	const newData = colorNoise(
+		imageData,
+		0,
+		sigma,
+		sigmaBlur,
+		2 * Math.ceil(2 * sigmaBlur) + 1
 	);
-
 	return await imageDataToBlob(imageData, newData);
 }
 
@@ -149,8 +146,7 @@ export async function applySaltPepperImageNoise(
 ): Promise<Blob> {
 	const imageData = await fileToImageData(file);
 
-	const newData = new Uint8ClampedArray(imageData.data);
-	newData.set(saltPepperNoise(newData, p));
+	const newData = saltPepperNoise(imageData.data, p);
 
 	return await imageDataToBlob(imageData, newData);
 }
