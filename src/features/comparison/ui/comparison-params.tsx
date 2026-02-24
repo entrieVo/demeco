@@ -8,7 +8,7 @@ import { ArrowDownRightIcon, Cat } from "lucide-react";
 import { cn } from "@/shared/lib/css";
 
 interface ComparisonParamsProps {
-	noiseParams: { sigma: number; sigmaBlur: number };
+	noiseParams: { noiseVariance: number; blurStrength: number };
 	onSigmaChange: (value: number[]) => void;
 	onSigmaBlurChange: (value: number[]) => void;
 	selectedNoise: NoiseType;
@@ -80,7 +80,7 @@ export function ComparisonParams({
 			<Card className={cardStyles}>
 				<div className="flex justify-between">
 					<p>Сила шума</p>
-					<p className="w-10 ml-5 text-right">{noiseParams.sigma}</p>
+					<p className="w-10 ml-5 text-right">{noiseParams.noiseVariance}</p>
 				</div>
 
 				<Slider
@@ -88,19 +88,19 @@ export function ComparisonParams({
 					min={0.1}
 					max={1}
 					step={0.01}
-					defaultValue={[noiseParams.sigma]}
+					defaultValue={[noiseParams.noiseVariance]}
 					onValueChange={onSigmaChange}
 				/>
 			</Card>
 
-			{selectedNoise === NOISE_TYPES.COLORED && (
+			{selectedNoise === NOISE_TYPES.COLOR && (
 				<>
 					<Separator className="lg:hidden" />
 
 					<Card className={cardStyles}>
 						<div className="flex justify-between">
 							<p>Сила размытия</p>
-							<p className="w-10 ml-5 text-right">{noiseParams.sigmaBlur}</p>
+							<p className="w-10 ml-5 text-right">{noiseParams.blurStrength}</p>
 						</div>
 
 						<Slider
@@ -108,7 +108,7 @@ export function ComparisonParams({
 							min={0.5}
 							max={3}
 							step={0.5}
-							defaultValue={[noiseParams.sigmaBlur]}
+							defaultValue={[noiseParams.blurStrength]}
 							onValueChange={onSigmaBlurChange}
 						/>
 					</Card>

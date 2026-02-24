@@ -32,12 +32,14 @@ export async function fileToImageData(file: File): Promise<ImageData> {
 }
 
 export async function imageDataToBlob(
-	imageData: ImageData,
-	newData: Uint8ClampedArray
-): Promise<Blob> {
+	imageData: ImageData | null,
+	newData: Uint8ClampedArray | null
+): Promise<Blob | null> {
+	if (!imageData) return null;
+
 	const updatedImageData = new ImageData(
 		// eslint-disable-next-line @typescript-eslint/no-explicit-any
-		newData as any,
+		newData ? (newData as any) : imageData,
 		imageData.width,
 		imageData.height
 	);

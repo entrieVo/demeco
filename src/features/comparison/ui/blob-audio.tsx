@@ -11,7 +11,6 @@ export function BlobAudio({
 	blob: Blob | null;
 	className?: string;
 }) {
-	console.log("BlobAudio received:", { blob, className }); // ← временный лог
 	const [url, setUrl] = useState<string | null>(null);
 
 	useEffect(() => {

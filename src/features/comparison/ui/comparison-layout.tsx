@@ -8,11 +8,11 @@ import { FilesShowcase } from "./files-showcase";
 import { cn } from "@/shared/lib/css";
 
 interface ComparisonLayoutProps {
-	imageRef: Blob | null;
 	audioRef: Blob | null;
-	noisyImage: Blob | null;
+	imageRef: Blob | null;
 	noisyAudio: Blob | null;
-	noiseParams: { sigma: number; sigmaBlur: number };
+	noisyImage: Blob | null;
+	noiseParams: { noiseVariance: number; blurStrength: number };
 	selectedNoise: NoiseType;
 	onNoiseSelect: (e: React.ChangeEvent<HTMLSelectElement>) => void;
 	onNoiseApply: () => void;
@@ -23,10 +23,10 @@ interface ComparisonLayoutProps {
 }
 
 export default function ComparisonLayout({
-	imageRef,
-	noisyImage,
 	audioRef,
+	imageRef,
 	noisyAudio,
+	noisyImage,
 	noiseParams,
 	onImageUpload,
 	onAudioUpload,

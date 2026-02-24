@@ -24,10 +24,12 @@ export function cloneFloat32Array(arr: Float32Array): Float32Array {
 }
 
 export function encodeWAV(
-	channels: Float32Array[],
+	channels: Float32Array[] | null,
 	sampleRate: number,
 	bitDepth = 16
-): Blob {
+): Blob | null {
+	if (!channels) return null;
+
 	const numChannels = channels.length;
 	const length = channels[0].length;
 	const buffer = new ArrayBuffer(44 + length * numChannels * 2);

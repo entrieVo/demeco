@@ -2,42 +2,49 @@
 import { useEffect, useState } from "react";
 import ComparisonLayout from "@/features/comparison/ui/comparison-layout";
 import { NOISE_TYPES, NoiseType } from "@/features/constants";
-import {
-	applyColorImageNoise,
-	applyGaussianImageNoise,
-	applySaltPepperImageNoise,
-} from "@/features/comparison/model/image-noises";
-import {
-	applyColoredAudioNoise,
-	applyGaussianAudioNoise,
-	applyImpulseAudioNoise,
-} from "@/features/comparison/model/audio-noises";
 import { Alert, AlertTitle } from "@/shared/ui/kit/alert";
 import { AlertTriangleIcon } from "lucide-react";
+import { gaussianNoise } from "@/features/comparison/model/noises/gaussian-noise";
+import { impulseNoise } from "@/features/comparison/model/noises/impulse-noise";
+import {
+	audioBufferFromFile,
+	cloneChannels,
+	encodeWAV,
+} from "@/features/comparison/model/audio-processing";
+import {
+	fileToImageData,
+	imageDataToBlob,
+} from "@/features/comparison/model/image-processing";
+import { colorNoise } from "@/features/comparison/model/noises/color-noise";
 
 export default function ComparisonPage() {
-	const [originalImage, setOriginalImage] = useState<File | null>(null);
-	const [noisyImage, setNoisyImage] = useState<Blob | null>(null);
-	const [originalAudio, setOriginalAudio] = useState<File | null>(null);
-	const [noisyAudio, setNoisyAudio] = useState<Blob | null>(null);
+	const [imageRef, setImageRef] = useState<File | null>(null);
+	const [noisedImage, setNoisedImage] = useState<Blob | null>(null);
+
+	const [audioRef, setAudioRef] = useState<File | null>(null);
+	const [noisedAudio, setNoisedAudio] = useState<Blob | null>(null);
+
 	const [selectedNoise, setSelectedNoise] = useState<NoiseType>(
 		NOISE_TYPES.GAUSSIAN
 	);
-	const [noiseParams, setNoiseParams] = useState({ sigma: 0.5, sigmaBlur: 2 });
+	const [noiseParams, setNoiseParams] = useState({
+		noiseVariance: 0.5,
+		blurStrength: 2,
+	});
 	const [showAlert, setShowAlert] = useState(false);
 
 	const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
 		const file = e.target.files?.[0];
 		if (!file) return;
-		setOriginalImage(file);
-		setNoisyImage(null);
+		setImageRef(file);
+		setNoisedImage(null);
 	};
 
 	const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
 		const file = e.target.files?.[0];
 		if (!file) return;
-		setOriginalAudio(file);
-		setNoisyAudio(null);
+		setAudioRef(file);
+		setNoisedAudio(null);
 	};
 
 	const handleNoiseSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -45,58 +52,75 @@ export default function ComparisonPage() {
 	};
 
 	const handleApplyNoise = async () => {
-		if (!originalImage || !originalAudio) {
+		if (!imageRef || !audioRef) {
 			setShowAlert(true);
 			return;
 		}
-		let image = new Blob();
-		let audio = new Blob();
+		let audioBlob: Blob | null = new Blob(),
+			imageBlob: Blob | null = new Blob();
+
+		const audioBuffer = await audioBufferFromFile(audioRef),
+			imageData = await fileToImageData(imageRef);
+
+		let noisedAudioArray: Float32Array[] | null = await cloneChannels(
+				audioBuffer
+			),
+			noisedImageData: Uint8ClampedArray | null = null;
 
 		switch (selectedNoise) {
 			case NOISE_TYPES.GAUSSIAN:
-				image = await applyGaussianImageNoise(
-					originalImage,
-					noiseParams.sigma * 50
+				noisedAudioArray = await gaussianNoise(
+					noisedAudioArray,
+					noiseParams.noiseVariance * 0.1
 				);
-				audio = await applyGaussianAudioNoise(
-					originalAudio,
-					noiseParams.sigma * 0.1
+
+				noisedImageData = await gaussianNoise(
+					imageData.data,
+					noiseParams.noiseVariance * 50
 				);
+
 				break;
-			case NOISE_TYPES.COLORED:
-				image = await applyColorImageNoise(
-					originalImage,
-					noiseParams.sigma * 50,
-					noiseParams.sigmaBlur
+
+			case NOISE_TYPES.COLOR:
+				noisedAudioArray = await colorNoise(
+					noisedAudioArray,
+					noiseParams.noiseVariance * 0.1,
+					noiseParams.blurStrength
 				);
-				audio = await applyColoredAudioNoise(
-					originalAudio,
-					noiseParams.sigma * 0.1
+				noisedImageData = await colorNoise(
+					imageData,
+					noiseParams.noiseVariance * 50,
+					noiseParams.blurStrength
 				);
 				break;
 			case NOISE_TYPES.IMPULSE:
-				image = await applySaltPepperImageNoise(
-					originalImage,
-					noiseParams.sigma
+				noisedAudioArray = await impulseNoise(
+					noisedAudioArray,
+					noiseParams.noiseVariance * 0.01
 				);
-				audio = await applyImpulseAudioNoise(
-					originalAudio,
-					noiseParams.sigma * 0.1
+				noisedImageData = await impulseNoise(
+					imageData.data,
+					noiseParams.noiseVariance
 				);
 				break;
 			default:
 				break;
 		}
 
-		setNoisyImage(image);
-		setNoisyAudio(audio);
+		if (!noisedAudioArray || !noisedImageData) return;
+
+		audioBlob = encodeWAV(noisedAudioArray, audioBuffer.sampleRate);
+		imageBlob = await imageDataToBlob(imageData, noisedImageData);
+
+		setNoisedImage(imageBlob);
+		setNoisedAudio(audioBlob);
 	};
 
 	const onSigmaChange = (value: number[]) => {
 		setNoiseParams((params) => {
 			return {
 				...params,
-				sigma: value[0],
+				noiseVariance: value[0],
 			};
 		});
 	};
@@ -104,7 +128,7 @@ export default function ComparisonPage() {
 		setNoiseParams((params) => {
 			return {
 				...params,
-				sigmaBlur: value[0],
+				blurStrength: value[0],
 			};
 		});
 	};
@@ -133,10 +157,10 @@ export default function ComparisonPage() {
 			)}
 
 			<ComparisonLayout
-				imageRef={originalImage}
-				noisyImage={noisyImage}
-				audioRef={originalAudio}
-				noisyAudio={noisyAudio}
+				audioRef={audioRef}
+				imageRef={imageRef}
+				noisyAudio={noisedAudio}
+				noisyImage={noisedImage}
 				selectedNoise={selectedNoise}
 				noiseParams={noiseParams}
 				onImageUpload={handleImageUpload}
