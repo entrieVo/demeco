@@ -4,8 +4,8 @@ import ComparisonLayout from "@/features/comparison/ui/comparison-layout";
 import { NOISE_TYPES, NoiseType } from "@/features/constants";
 import { Alert, AlertTitle } from "@/shared/ui/kit/alert";
 import { AlertTriangleIcon } from "lucide-react";
-import { gaussianNoise } from "@/features/comparison/model/noises/gaussian-noise";
-import { impulseNoise } from "@/features/comparison/model/noises/impulse-noise";
+import { gaussianNoise } from "@/features/comparison/model/noise/gaussian-noise";
+import { impulseNoise } from "@/features/comparison/model/noise/impulse-noise";
 import {
 	audioBufferFromFile,
 	cloneChannels,
@@ -15,7 +15,10 @@ import {
 	fileToImageData,
 	imageDataToBlob,
 } from "@/features/comparison/model/image-processing";
-import { colorNoise } from "@/features/comparison/model/noises/color-noise";
+import { colorNoise } from "@/features/comparison/model/noise/color-noise";
+import { hmmDenoise } from "@/features/comparison/model/denoise/hmm-denoise";
+import { wienerDenoise } from "@/features/comparison/model/denoise/wiener-denoise";
+import { bayesianDenoise } from "@/features/comparison/model/denoise/bayesian-denoise";
 
 export default function ComparisonPage() {
 	const [imageRef, setImageRef] = useState<File | null>(null);
@@ -23,6 +26,8 @@ export default function ComparisonPage() {
 
 	const [audioRef, setAudioRef] = useState<File | null>(null);
 	const [noisedAudio, setNoisedAudio] = useState<Blob | null>(null);
+	const [denoisedAudio, setDenoisedAudio] = useState<Blob | null>(null);
+	const [denoisedImage, setDenoisedImage] = useState<Blob | null>(null);
 
 	const [selectedNoise, setSelectedNoise] = useState<NoiseType>(
 		NOISE_TYPES.GAUSSIAN
@@ -31,6 +36,7 @@ export default function ComparisonPage() {
 		noiseVariance: 0.5,
 		blurStrength: 2,
 	});
+	const [selectedDenoise, setSelectedDenoise] = useState<string | null>(null);
 	const [showAlert, setShowAlert] = useState(false);
 
 	const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -38,6 +44,7 @@ export default function ComparisonPage() {
 		if (!file) return;
 		setImageRef(file);
 		setNoisedImage(null);
+		setDenoisedAudio(null);
 	};
 
 	const handleAudioUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -49,6 +56,10 @@ export default function ComparisonPage() {
 
 	const handleNoiseSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
 		setSelectedNoise(e.target.value as NoiseType);
+	};
+
+	const handleDenoiseSelect = (value: string) => {
+		setSelectedDenoise(value);
 	};
 
 	const handleApplyNoise = async () => {
@@ -73,7 +84,6 @@ export default function ComparisonPage() {
 					noisedAudioArray,
 					noiseParams.noiseVariance * 0.1
 				);
-
 				noisedImageData = await gaussianNoise(
 					imageData.data,
 					noiseParams.noiseVariance * 50
@@ -92,6 +102,7 @@ export default function ComparisonPage() {
 					noiseParams.noiseVariance * 50,
 					noiseParams.blurStrength
 				);
+
 				break;
 			case NOISE_TYPES.IMPULSE:
 				noisedAudioArray = await impulseNoise(
@@ -114,6 +125,30 @@ export default function ComparisonPage() {
 
 		setNoisedImage(imageBlob);
 		setNoisedAudio(audioBlob);
+
+		if (!noisedAudio || !selectedDenoise) return;
+
+		const denoiseFunc = {
+			bayesian: bayesianDenoise,
+			wiener: wienerDenoise,
+			hmm: hmmDenoise,
+		}[selectedDenoise];
+
+		if (!denoiseFunc) return;
+
+		const denoisedAudio = await denoiseFunc(
+			noisedAudioArray,
+			noiseParams.noiseVariance * 50
+		);
+		const denoisedImageData = await denoiseFunc(
+			noisedImageData,
+			noiseParams.noiseVariance * 50,
+			imageData.width,
+			imageData.height
+		);
+
+		setDenoisedAudio(encodeWAV(denoisedAudio, audioBuffer.sampleRate));
+		setDenoisedImage(await imageDataToBlob(imageData, denoisedImageData));
 	};
 
 	const onSigmaChange = (value: number[]) => {
@@ -161,11 +196,15 @@ export default function ComparisonPage() {
 				imageRef={imageRef}
 				noisyAudio={noisedAudio}
 				noisyImage={noisedImage}
+				denoisedAudio={denoisedAudio}
+				denoisedImage={denoisedImage}
 				selectedNoise={selectedNoise}
+				selectedDenoise={selectedDenoise}
 				noiseParams={noiseParams}
 				onImageUpload={handleImageUpload}
 				onAudioUpload={handleAudioUpload}
 				onNoiseSelect={handleNoiseSelect}
+				onDenoiseSelect={handleDenoiseSelect}
 				onNoiseApply={handleApplyNoise}
 				onSigmaChange={onSigmaChange}
 				onSigmaBlurChange={onSigmaBlurChange}

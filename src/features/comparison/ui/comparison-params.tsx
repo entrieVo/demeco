@@ -4,7 +4,7 @@ import { Card } from "@/shared/ui/kit/card";
 import { Select, SelectContent, SelectItem } from "@/shared/ui/kit/select";
 import { Slider } from "@/shared/ui/kit/slider";
 import { Separator } from "@/shared/ui/kit/separator";
-import { ArrowDownRightIcon, Cat } from "lucide-react";
+import { ArrowDownRightIcon } from "lucide-react";
 import { cn } from "@/shared/lib/css";
 
 interface ComparisonParamsProps {

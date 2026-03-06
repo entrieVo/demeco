@@ -1,4 +1,4 @@
-import { AUTHOR, VERSION } from "@/features/constants";
+import { AUTHOR, NOISE_TYPES, VERSION } from "@/features/constants";
 import { NoiseType } from "@/features/constants";
 import { Header } from "@/features/header/header";
 import { Card } from "@/shared/ui/kit/card";
@@ -6,15 +6,28 @@ import { FileUploader } from "@/features/comparison/ui/file-uploader";
 import { ComparisonParams } from "./comparison-params";
 import { FilesShowcase } from "./files-showcase";
 import { cn } from "@/shared/lib/css";
+import {
+	Select,
+	SelectContent,
+	SelectGroup,
+	SelectItem,
+	SelectLabel,
+	SelectTrigger,
+	SelectValue,
+} from "@/shared/ui/kit/select";
 
 interface ComparisonLayoutProps {
 	audioRef: Blob | null;
 	imageRef: Blob | null;
 	noisyAudio: Blob | null;
 	noisyImage: Blob | null;
+	denoisedAudio: Blob | null;
+	denoisedImage: Blob | null;
 	noiseParams: { noiseVariance: number; blurStrength: number };
+	selectedDenoise: string | null;
 	selectedNoise: NoiseType;
 	onNoiseSelect: (e: React.ChangeEvent<HTMLSelectElement>) => void;
+	onDenoiseSelect: (value: string) => void;
 	onNoiseApply: () => void;
 	onImageUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
 	onAudioUpload: (e: React.ChangeEvent<HTMLInputElement>) => void;
@@ -28,10 +41,14 @@ export default function ComparisonLayout({
 	noisyAudio,
 	noisyImage,
 	noiseParams,
+	denoisedAudio,
+	denoisedImage,
 	onImageUpload,
 	onAudioUpload,
 	selectedNoise,
+	selectedDenoise,
 	onNoiseSelect,
+	onDenoiseSelect,
 	onNoiseApply,
 	onSigmaChange,
 	onSigmaBlurChange,
@@ -96,6 +113,34 @@ export default function ComparisonLayout({
 				imageRef={noisyImage}
 				audioLabel={<p>Зашумлённое аудио</p>}
 				imageLabel={<p>Зашумлённое изображение</p>}
+				className="self-center"
+			/>
+			{noisyAudio && noisyImage && (
+				<Card>
+					<h3>Фильтр шумоподавления</h3>
+					<Select onValueChange={onDenoiseSelect}>
+						<SelectTrigger className="w-full max-w-48">
+							<SelectValue placeholder={selectedDenoise} />
+						</SelectTrigger>
+						<SelectContent>
+							{Object.entries({
+								bayesian: "bayesian",
+								wiener: "wiener",
+								hmm: "hmm",
+							}).map(([key, label]) => (
+								<SelectItem key={key} value={label}>
+									{label}
+								</SelectItem>
+							))}
+						</SelectContent>
+					</Select>
+				</Card>
+			)}
+			<FilesShowcase
+				audioRef={denoisedAudio}
+				imageRef={denoisedImage}
+				audioLabel={<p>Очищенное аудио</p>}
+				imageLabel={<p>Очищенное изображение</p>}
 				className="self-center"
 			/>
 		</main>
