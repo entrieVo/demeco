@@ -6,19 +6,19 @@ import { Alert, AlertTitle } from "@/shared/ui/kit/alert";
 import { AlertTriangleIcon } from "lucide-react";
 import { gaussianNoise } from "@/features/comparison/model/noise/gaussian-noise";
 import { impulseNoise } from "@/features/comparison/model/noise/impulse-noise";
-import {
-	audioBufferFromFile,
-	cloneChannels,
-	encodeWAV,
-} from "@/features/comparison/model/audio-processing";
-import {
-	fileToImageData,
-	imageDataToBlob,
-} from "@/features/comparison/model/image-processing";
 import { colorNoise } from "@/features/comparison/model/noise/color-noise";
 import { hmmDenoise } from "@/features/comparison/model/denoise/hmm-denoise";
 import { wienerDenoise } from "@/features/comparison/model/denoise/wiener-denoise";
 import { bayesianDenoise } from "@/features/comparison/model/denoise/bayesian-denoise";
+import {
+	audioBufferFromFile,
+	cloneChannels,
+	encodeWAV,
+} from "@/features/comparison/model/utils/audio-processing";
+import {
+	fileToImageData,
+	imageDataToBlob,
+} from "@/features/comparison/model/utils/image-processing";
 
 export default function ComparisonPage() {
 	const [imageRef, setImageRef] = useState<File | null>(null);
@@ -33,7 +33,7 @@ export default function ComparisonPage() {
 		NOISE_TYPES.GAUSSIAN
 	);
 	const [noiseParams, setNoiseParams] = useState({
-		noiseVariance: 0.5,
+		noiseVariance: 5,
 		blurStrength: 2,
 	});
 	const [selectedDenoise, setSelectedDenoise] = useState<string | null>(null);
@@ -82,11 +82,11 @@ export default function ComparisonPage() {
 			case NOISE_TYPES.GAUSSIAN:
 				noisedAudioArray = await gaussianNoise(
 					noisedAudioArray,
-					noiseParams.noiseVariance * 0.1
+					noiseParams.noiseVariance
 				);
 				noisedImageData = await gaussianNoise(
 					imageData.data,
-					noiseParams.noiseVariance * 50
+					noiseParams.noiseVariance
 				);
 
 				break;
@@ -94,12 +94,12 @@ export default function ComparisonPage() {
 			case NOISE_TYPES.COLOR:
 				noisedAudioArray = await colorNoise(
 					noisedAudioArray,
-					noiseParams.noiseVariance * 0.1,
+					noiseParams.noiseVariance,
 					noiseParams.blurStrength
 				);
 				noisedImageData = await colorNoise(
 					imageData,
-					noiseParams.noiseVariance * 50,
+					noiseParams.noiseVariance,
 					noiseParams.blurStrength
 				);
 
@@ -107,7 +107,7 @@ export default function ComparisonPage() {
 			case NOISE_TYPES.IMPULSE:
 				noisedAudioArray = await impulseNoise(
 					noisedAudioArray,
-					noiseParams.noiseVariance * 0.01
+					noiseParams.noiseVariance
 				);
 				noisedImageData = await impulseNoise(
 					imageData.data,
@@ -138,11 +138,11 @@ export default function ComparisonPage() {
 
 		const denoisedAudio = await denoiseFunc(
 			noisedAudioArray,
-			noiseParams.noiseVariance * 50
+			noiseParams.noiseVariance
 		);
 		const denoisedImageData = await denoiseFunc(
 			noisedImageData,
-			noiseParams.noiseVariance * 50,
+			noiseParams.noiseVariance,
 			imageData.width,
 			imageData.height
 		);
@@ -155,7 +155,7 @@ export default function ComparisonPage() {
 		setNoiseParams((params) => {
 			return {
 				...params,
-				noiseVariance: value[0],
+				noiseVariance: /* sliderToSnrDb */ value[0],
 			};
 		});
 	};
@@ -211,4 +211,9 @@ export default function ComparisonPage() {
 			/>
 		</div>
 	);
+}
+
+function sliderToSnrDb(sliderValue: number): number {
+	// Линейное преобразование: 0.1 → 30 dB, 1.0 → 0 dB
+	return 30 - ((sliderValue - 0.1) / 0.9) * 30;
 }

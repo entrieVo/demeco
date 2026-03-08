@@ -1,38 +1,45 @@
-import { cloneFloat32Array } from "../audio-processing";
-import { fft, Complex, ifft } from "../fft";
-import { binProps, createSpectrum, hannWindow } from "../stft";
+import { cloneFloat32Array } from "../utils/audio-processing";
+import { fft, Complex, ifft } from "../utils/fft";
+import { hannWindow, binProps, createSpectrum } from "../utils/stft";
 
 export async function hmmDenoise(
 	signal: Float32Array[],
-	noiseVariance: number,
+	relativeNoiseLevel: number,
 	width?: number,
 	height?: number
 ): Promise<Float32Array[]>;
 
 export async function hmmDenoise(
 	signal: Uint8ClampedArray,
-	noiseVariance: number
+	relativeNoiseLevel: number,
+	width: number,
+	height: number
 ): Promise<Uint8ClampedArray>;
 
 export async function hmmDenoise(
 	signal: Float32Array[] | Uint8ClampedArray,
-	noiseVariance: number,
+	relativeNoiseLevel: number,
 	width?: number,
 	height?: number
 ): Promise<Float32Array[] | Uint8ClampedArray> {
-	console.log("noiseVariance: ", noiseVariance);
-
 	if (
 		Array.isArray(signal) &&
 		signal.every((item) => item instanceof Float32Array)
 	)
-		return audioHmmFilter(signal, noiseVariance);
+		return audioHmmFilter(
+			signal,
+			computeHmmAudioVariance(signal, relativeNoiseLevel)
+		);
 	else if (signal instanceof Uint8ClampedArray && width && height)
-		return imageHmmFilter(signal, noiseVariance, width, height);
+		return imageHmmFilter(
+			signal,
+			computeHmmImageVariance(signal, relativeNoiseLevel),
+			width,
+			height
+		);
 
 	return signal;
 }
-
 // [SECTION/> Аудио
 
 function audioHmmFilter(
@@ -437,3 +444,69 @@ function estimateImageHMMParams(features: Float32Array, noiseVariance: number) {
 }
 
 // [!SECTION/> !Изображение
+
+// [SECTION/> Вспомогательные функции
+
+function computeHmmAudioVariance(
+	signal: Float32Array | Float32Array[],
+	relativeNoiseLevel: number
+): number {
+	const channels = Array.isArray(signal) ? signal : [signal as Float32Array];
+	const frameSize = 512;
+	const hopSize = Math.floor(frameSize / 2);
+
+	// Собираем амплитуды спектра для оценки мощности сигнала
+	const spectrumSamples: number[] = [];
+	const maxFrames = Math.min(20, Math.floor(channels[0].length / hopSize));
+
+	for (const ch of channels) {
+		for (let f = 0; f < maxFrames; f++) {
+			const start = f * hopSize;
+			const frame = new Float32Array(frameSize);
+
+			for (let j = 0; j < frameSize && start + j < ch.length; j++) {
+				frame[j] = ch[start + j] * hannWindow(j, frameSize);
+			}
+
+			const spectrum = fft(frame);
+			const { amplitude } = binProps(spectrum);
+
+			for (let k = 0; k < amplitude.length / 2; k++) {
+				spectrumSamples.push(amplitude[k]);
+			}
+		}
+	}
+
+	const n = spectrumSamples.length;
+	if (n === 0) return 1e-10;
+
+	const signalPower = spectrumSamples.reduce((s, x) => s + x * x, 0) / n;
+	const noiseVariance = signalPower * Math.pow(10, relativeNoiseLevel / 10);
+
+	return Math.max(noiseVariance, 1e-10);
+}
+
+function computeHmmImageVariance(
+	signal: Uint8ClampedArray,
+	relativeNoiseLevel: number
+): number {
+	let sumY = 0;
+	let sumY2 = 0;
+	let count = 0;
+
+	for (let i = 0; i < signal.length; i += 4) {
+		const y = 0.299 * signal[i] + 0.587 * signal[i + 1] + 0.114 * signal[i + 2];
+		sumY += y;
+		sumY2 += y * y;
+		count++;
+	}
+
+	if (count === 0) return 1e-10;
+	const meanY = sumY / count;
+	const variance = sumY2 / count - meanY * meanY;
+
+	const noiseVariance = variance * Math.pow(10, relativeNoiseLevel / 10);
+	return Math.max(noiseVariance, 1e-10);
+}
+
+// [!SECTION/> !Вспомогательные функции

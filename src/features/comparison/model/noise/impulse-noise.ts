@@ -1,4 +1,4 @@
-import { cloneFloat32Array } from "../audio-processing";
+import { cloneFloat32Array } from "../utils/audio-processing";
 
 export async function impulseNoise(
 	signal: Float32Array[],
@@ -18,7 +18,7 @@ export async function impulseNoise(
 		Array.isArray(signal) &&
 		signal.every((item) => item instanceof Float32Array)
 	)
-		return audioImpulseNoise(signal, probability, 1);
+		return audioImpulseNoise(signal, probability, probability);
 	else if (signal instanceof Uint8ClampedArray)
 		return imageImpulseNoise(signal, probability);
 
@@ -34,7 +34,7 @@ function audioImpulseNoise(
 
 	newAudioBuffer = newAudioBuffer.map((signal) =>
 		signal.map((channel) => {
-			if (Math.random() < p) return Math.random() < 0.5 ? -1 : 1 * amplitude;
+			if (Math.random() < p) return (Math.random() < 0.5 ? -1 : 1) * amplitude;
 			else return channel;
 		})
 	);

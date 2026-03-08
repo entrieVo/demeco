@@ -1,33 +1,33 @@
-import { cloneFloat32Array } from "../audio-processing";
+import { cloneFloat32Array } from "../utils/audio-processing";
+import { computeAudioVariance, computeImageVariance } from "../utils/normalize";
 import { gaussianNoise } from "./gaussian-noise";
 
 export async function colorNoise(
 	signal: Float32Array[],
-	noiseVariance: number,
+	relativeNoiseLevel: number,
 	blurStrength: number
 ): Promise<Float32Array[]>;
 
 export async function colorNoise(
 	signal: ImageData,
-	noiseVariance: number,
+	relativeNoiseLevel: number,
 	blurStrength: number
 ): Promise<Uint8ClampedArray>;
 
 export async function colorNoise(
 	signal: Float32Array[] | ImageData,
-	noiseVariance: number,
+	relativeNoiseLevel: number,
 	blurStrength: number
 ): Promise<Float32Array[] | Uint8ClampedArray> {
 	if (
 		Array.isArray(signal) &&
 		signal.every((item) => item instanceof Float32Array)
 	)
-		return await audioColorNoise(signal, noiseVariance);
+		return await audioColorNoise(signal, relativeNoiseLevel);
 	else if (signal instanceof ImageData)
 		return await imageColorNoise(
 			signal,
-			0,
-			noiseVariance,
+			relativeNoiseLevel,
 			blurStrength,
 			2 * Math.ceil(2 * blurStrength) + 1
 		);
@@ -35,13 +35,15 @@ export async function colorNoise(
 	return signal;
 }
 
-async function audioColorNoise(
-	data: Float32Array[],
-	sigma: number
-): Promise<Float32Array[]> {
-	let newData = data.map((ch) => cloneFloat32Array(ch));
+// [SECTION/> Аудио
 
-	newData = await gaussianNoise(newData, sigma);
+async function audioColorNoise(
+	signal: Float32Array[],
+	relativeNoiseLevel: number
+): Promise<Float32Array[]> {
+	let newData = signal.map((ch) => cloneFloat32Array(ch));
+
+	newData = await gaussianNoise(newData, relativeNoiseLevel);
 
 	// при f_c = 0.2 после билинейного преобразования
 	// -3 дБ на частоте 0.2 + гладкий спад
@@ -49,28 +51,6 @@ async function audioColorNoise(
 	const a = [1.0, -1.143, 0.4128];
 
 	newData = newData.map((ch) => butterworthFilter(ch, b, a));
-
-	return newData;
-}
-
-async function imageColorNoise(
-	imageData: ImageData,
-	mu: number,
-	sigma: number,
-	sigmaBlur: number,
-	kernelSize: number
-): Promise<Uint8ClampedArray> {
-	const newData = new Uint8ClampedArray(imageData.data);
-
-	newData.set(await gaussianNoise(newData, sigma));
-	newData.set(
-		gaussianBlur(
-			newData,
-			createKernel(kernelSize, sigmaBlur),
-			imageData.height,
-			imageData.width
-		)
-	);
 
 	return newData;
 }
@@ -85,9 +65,9 @@ function butterworthFilter(
 
 	// Начальные условия: y[-1] = y[-2] = 0
 	let y1 = 0,
-		y2 = 0; // y[n-1], y[n-2]
+		y2 = 0;
 	let x1 = 0,
-		x2 = 0; // x[n-1], x[n-2]
+		x2 = 0;
 
 	for (let i = 0; i < n; i++) {
 		const x0 = signal[i];
@@ -104,6 +84,31 @@ function butterworthFilter(
 	}
 
 	return y;
+}
+
+// [!SECTION/> !Аудио
+
+// [SECTION/> Изображения
+
+async function imageColorNoise(
+	imageData: ImageData,
+	relativeNoiseLevel: number,
+	sigmaBlur: number,
+	kernelSize: number
+): Promise<Uint8ClampedArray> {
+	const newData = new Uint8ClampedArray(imageData.data);
+
+	newData.set(await gaussianNoise(newData, relativeNoiseLevel));
+	newData.set(
+		gaussianBlur(
+			newData,
+			createKernel(kernelSize, sigmaBlur),
+			imageData.height,
+			imageData.width
+		)
+	);
+
+	return newData;
 }
 
 function gaussianBlur(
@@ -167,3 +172,5 @@ function createKernel(size: number, sigma: number): number[] {
 	const sum = kernel.reduce((s, x) => s + x, 0);
 	return kernel.map((x) => x / sum);
 }
+
+// [!SECTION/> !Изображения

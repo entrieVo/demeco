@@ -1,22 +1,23 @@
-import { cloneFloat32Array } from "../audio-processing";
-import { fft, Complex, ifft } from "../fft";
-import { binProps, createSpectrum, hannWindow } from "../stft";
+import { cloneFloat32Array } from "../utils/audio-processing";
+import { fft, Complex, ifft } from "../utils/fft";
+import { computeAudioVariance, computeImageVariance } from "../utils/normalize";
+import { hannWindow, binProps, createSpectrum } from "../utils/stft";
 
 export async function wienerDenoise(
 	signal: Float32Array[],
-	noiseVariance: number
+	relativeNoiseLevel: number
 ): Promise<Float32Array[]>;
 
 export async function wienerDenoise(
 	signal: Uint8ClampedArray,
-	noiseVariance: number,
+	relativeNoiseLevel: number,
 	width?: number,
 	height?: number
 ): Promise<Uint8ClampedArray>;
 
 export async function wienerDenoise(
 	signal: Float32Array[] | Uint8ClampedArray,
-	noiseVariance: number,
+	relativeNoiseLevel: number,
 	width?: number,
 	height?: number
 ): Promise<Float32Array[] | Uint8ClampedArray> {
@@ -24,23 +25,36 @@ export async function wienerDenoise(
 		Array.isArray(signal) &&
 		signal.every((item) => item instanceof Float32Array)
 	)
-		return audioWienerFilter(signal, noiseVariance);
+		return audioWienerFilter(signal, computeAudioVariance(relativeNoiseLevel));
 	else if (signal instanceof Uint8ClampedArray && width && height)
-		return imageWienerFilter(signal, noiseVariance, width, height);
+		return imageWienerFilter(
+			signal,
+			computeImageVariance(relativeNoiseLevel),
+			width,
+			height
+		);
 
 	return signal;
 }
 
+// [SECTION/> Аудио
+
 function audioWienerFilter(
 	signal: Float32Array[],
-	noiseVariance: number
+	relativeNoiseLevel: number
 ): Float32Array[] {
-	return stft(signal, noiseVariance);
+	const frameSize = 512;
+	const windowGain = 0.375;
+	const fftScalingFactor = frameSize * windowGain;
+
+	const noiseVarianceFreq = relativeNoiseLevel * fftScalingFactor;
+
+	return stft(signal, noiseVarianceFreq);
 }
 
 function wienerFilter(
 	amplitude: Float32Array,
-	noiseVariance: number,
+	relativeNoiseLevel: number,
 	minGain: number = 0.02
 ): Float32Array {
 	const N = amplitude.length;
@@ -48,12 +62,13 @@ function wienerFilter(
 
 	for (let k = 0; k < N; k++) {
 		const signalPower = amplitude[k] ** 2;
-		const wienerGain = signalPower / (signalPower + noiseVariance);
+		const wienerGain = signalPower / (signalPower + relativeNoiseLevel);
 		const clampedGain = Math.max(minGain, Math.min(1, wienerGain));
 
 		filtered[k] = clampedGain * amplitude[k];
 	}
 
+	// Симметрия спектра (для вещественного сигнала)
 	for (let k = 1; k < N / 2; k++) {
 		filtered[N - k] = filtered[k];
 	}
@@ -61,7 +76,7 @@ function wienerFilter(
 	return filtered;
 }
 
-function stft(signal: Float32Array[], noiseVariance: number): Float32Array[] {
+function stft(signal: Float32Array[], sigma: number): Float32Array[] {
 	const frameSize = 512;
 	const hopSize = Math.floor(frameSize / 2);
 
@@ -88,7 +103,7 @@ function stft(signal: Float32Array[], noiseVariance: number): Float32Array[] {
 			const spectrum = fft(frame);
 			const { amplitude, phase } = binProps(spectrum);
 
-			const filteredAmplitude = wienerFilter(amplitude, noiseVariance);
+			const filteredAmplitude = wienerFilter(amplitude, sigma);
 
 			const filteredSpectrum: Complex[] = createSpectrum(
 				filteredAmplitude,
@@ -114,9 +129,13 @@ function stft(signal: Float32Array[], noiseVariance: number): Float32Array[] {
 	});
 }
 
+// [!SECTION/> !Аудио
+
+// [SECTION/> Изображения
+
 function imageWienerFilter(
 	signal: Uint8ClampedArray,
-	noiseVariance: number,
+	sigma: number,
 	width: number,
 	height: number
 ): Uint8ClampedArray {
@@ -144,7 +163,7 @@ function imageWienerFilter(
 					currentValue,
 					mean,
 					variance,
-					noiseVariance
+					sigma
 				);
 
 				filteredSignal[arrayIndex] = filteredValue;
@@ -168,11 +187,11 @@ function applyWienerToPixel(
 	currentValue: number,
 	localMean: number,
 	localVariance: number,
-	noiseVariance: number,
+	sigma: number,
 	minGain: number = 0.05
 ): number {
-	const signalVariance = Math.max(0, localVariance - noiseVariance);
-	const wienerGain = signalVariance / (signalVariance + noiseVariance);
+	const signalVariance = Math.max(0, localVariance - sigma);
+	const wienerGain = signalVariance / (signalVariance + sigma);
 	const clampedGain = Math.max(minGain, Math.min(1, wienerGain));
 
 	return localMean + clampedGain * (currentValue - localMean);
@@ -237,3 +256,5 @@ function calculateLocalStats(
 
 	return { mean, variance };
 }
+
+// [!SECTION/> !Изображения

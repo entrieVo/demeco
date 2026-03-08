@@ -1,20 +1,21 @@
-import { cloneFloat32Array } from "../audio-processing";
+import { cloneFloat32Array } from "@/features/comparison/model/utils/audio-processing";
+import { computeAudioVariance, computeImageVariance } from "../utils/normalize";
 
 export async function bayesianDenoise(
 	signal: Float32Array[],
-	noiseVariance: number
+	relativeNoiseLevel: number
 ): Promise<Float32Array[]>;
 
 export async function bayesianDenoise(
 	signal: Uint8ClampedArray,
-	noiseVariance: number,
+	relativeNoiseLevel: number,
 	width?: number,
 	height?: number
 ): Promise<Uint8ClampedArray>;
 
 export async function bayesianDenoise(
 	signal: Float32Array[] | Uint8ClampedArray,
-	noiseVariance: number,
+	relativeNoiseLevel: number,
 	width?: number,
 	height?: number
 ): Promise<Float32Array[] | Uint8ClampedArray> {
@@ -22,16 +23,24 @@ export async function bayesianDenoise(
 		Array.isArray(signal) &&
 		signal.every((item) => item instanceof Float32Array)
 	)
-		return audioBayesianFilter(signal, noiseVariance);
+		return audioBayesianFilter(
+			signal,
+			computeAudioVariance(relativeNoiseLevel)
+		);
 	else if (signal instanceof Uint8ClampedArray && width && height)
-		return imageBayesianFilter(signal, noiseVariance, width, height);
+		return imageBayesianFilter(
+			signal,
+			computeImageVariance(relativeNoiseLevel),
+			width,
+			height
+		);
 
 	return signal;
 }
 
 function audioBayesianFilter(
 	audioBuffer: Float32Array[],
-	noiseVariance: number
+	relativeNoiseLevel: number
 ): Float32Array[] {
 	const N = 32;
 	const r = Math.floor(N / 2);
@@ -59,11 +68,11 @@ function audioBayesianFilter(
 		for (let i = 0; i < length; i++) {
 			const mean = sum / N;
 			const localVariance = Math.max(0, sumSq / N - mean * mean);
-			const signalVariance = Math.max(0, localVariance - noiseVariance);
+			const signalVariance = Math.max(0, localVariance - relativeNoiseLevel);
 
 			result[i] =
 				mean +
-				(signalVariance / (signalVariance + noiseVariance)) *
+				(signalVariance / (signalVariance + relativeNoiseLevel)) *
 					(signal[i] - mean);
 
 			// сдвиг окна
@@ -82,7 +91,7 @@ function audioBayesianFilter(
 
 export async function imageBayesianFilter(
 	signal: Uint8ClampedArray,
-	noiseVariance: number,
+	relativeNoiseLevel: number,
 	width: number,
 	height: number,
 	blockSize: number = 5
@@ -108,8 +117,9 @@ export async function imageBayesianFilter(
 				const variance =
 					block.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / block.length;
 
-				const signalVariance = Math.max(0, variance - noiseVariance);
-				const gain = signalVariance / (signalVariance + noiseVariance + 1e-10);
+				const signalVariance = Math.max(0, variance - relativeNoiseLevel);
+				const gain =
+					signalVariance / (signalVariance + relativeNoiseLevel + 1e-10);
 
 				for (let i = 0; i < positions.length; i++) {
 					const { x, y } = positions[i];
@@ -123,7 +133,7 @@ export async function imageBayesianFilter(
 		}
 	}
 
-	// alpha-канал
+	// альфа-канал
 	for (let y = 0; y < height; y++) {
 		for (let x = 0; x < width; x++) {
 			const idx = (y * width + x) * channels + 3;
