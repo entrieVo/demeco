@@ -1,4 +1,4 @@
-export const VERSION = 0.1;
+export const VERSION = 0.7;
 export const AUTHOR = "Василец Анастасия Вячеславовна";
 
 export const FILE_TYPES = {

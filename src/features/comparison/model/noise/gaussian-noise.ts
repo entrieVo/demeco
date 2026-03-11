@@ -1,5 +1,8 @@
 import { cloneFloat32Array } from "../utils/audio-processing";
-import { computeAudioVariance, computeImageVariance } from "../utils/normalize";
+import {
+	computeAudioNoiseVariance,
+	computeImageNoiseVariance,
+} from "../utils/normalize";
 import { normalDistribution } from "../utils/probability_tools";
 
 export async function gaussianNoise(
@@ -20,12 +23,15 @@ export async function gaussianNoise(
 		Array.isArray(signal) &&
 		signal.every((item) => item instanceof Float32Array)
 	)
-		return audioGaussianNoise(signal, computeAudioVariance(relativeNoiseLevel));
+		return audioGaussianNoise(
+			signal,
+			computeAudioNoiseVariance(relativeNoiseLevel)
+		);
 	else if (signal instanceof Uint8ClampedArray)
 		return imageGaussianNoise(
 			signal,
 			0,
-			computeImageVariance(relativeNoiseLevel)
+			computeImageNoiseVariance(relativeNoiseLevel)
 		);
 
 	return signal;

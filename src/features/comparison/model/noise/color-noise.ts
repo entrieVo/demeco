@@ -1,5 +1,8 @@
 import { cloneFloat32Array } from "../utils/audio-processing";
-import { computeAudioVariance, computeImageVariance } from "../utils/normalize";
+import {
+	computeAudioNoiseVariance,
+	computeImageNoiseVariance,
+} from "../utils/normalize";
 import { gaussianNoise } from "./gaussian-noise";
 
 export async function colorNoise(

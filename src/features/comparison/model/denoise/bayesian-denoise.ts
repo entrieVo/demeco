@@ -1,5 +1,12 @@
 import { cloneFloat32Array } from "@/features/comparison/model/utils/audio-processing";
-import { computeAudioVariance, computeImageVariance } from "../utils/normalize";
+import { computeDenoiseVariance } from "../utils/normalize";
+import {
+	computeAudioSignalPower,
+	computeImageSignalPower,
+} from "../utils/probability_tools";
+
+const AUDIO_WINDOW_SIZE = 32;
+const DEFAULT_BLOCK_SIZE = Math.round(AUDIO_WINDOW_SIZE ** 0.5);
 
 export async function bayesianDenoise(
 	signal: Float32Array[],
@@ -23,29 +30,27 @@ export async function bayesianDenoise(
 		Array.isArray(signal) &&
 		signal.every((item) => item instanceof Float32Array)
 	)
-		return audioBayesianFilter(
-			signal,
-			computeAudioVariance(relativeNoiseLevel)
-		);
+		return audioBayesianFilter(signal, relativeNoiseLevel);
 	else if (signal instanceof Uint8ClampedArray && width && height)
-		return imageBayesianFilter(
-			signal,
-			computeImageVariance(relativeNoiseLevel),
-			width,
-			height
-		);
+		return imageBayesianFilter(signal, relativeNoiseLevel, width, height);
 
 	return signal;
 }
 
+// [SECTION/> Аудио
+
 function audioBayesianFilter(
-	audioBuffer: Float32Array[],
+	signal: Float32Array[],
 	relativeNoiseLevel: number
 ): Float32Array[] {
+	const sigma = computeDenoiseVariance(
+		relativeNoiseLevel,
+		computeAudioSignalPower(signal)
+	);
 	const N = 32;
 	const r = Math.floor(N / 2);
 
-	return audioBuffer.map((channel) => {
+	return signal.map((channel) => {
 		const signal = cloneFloat32Array(channel);
 		const length = signal.length;
 		const result = new Float32Array(length);
@@ -68,12 +73,10 @@ function audioBayesianFilter(
 		for (let i = 0; i < length; i++) {
 			const mean = sum / N;
 			const localVariance = Math.max(0, sumSq / N - mean * mean);
-			const signalVariance = Math.max(0, localVariance - relativeNoiseLevel);
+			const signalVariance = Math.max(0, localVariance - sigma);
+			const gain = signalVariance / (signalVariance + sigma + 1e-10);
 
-			result[i] =
-				mean +
-				(signalVariance / (signalVariance + relativeNoiseLevel)) *
-					(signal[i] - mean);
+			result[i] = mean + gain * (signal[i] - mean);
 
 			// сдвиг окна
 			const leave = getSample(i - r);
@@ -89,57 +92,85 @@ function audioBayesianFilter(
 	});
 }
 
+// [!SECTION/> !Аудио
+// [SECTION/> Изображения
+
 export async function imageBayesianFilter(
 	signal: Uint8ClampedArray,
 	relativeNoiseLevel: number,
 	width: number,
 	height: number,
-	blockSize: number = 5
+	blockSize: number = DEFAULT_BLOCK_SIZE
 ): Promise<Uint8ClampedArray> {
+	const sigma = computeDenoiseVariance(
+		relativeNoiseLevel,
+		computeImageSignalPower(signal)
+	);
+
 	const result = new Uint8ClampedArray(signal.length);
-	const channels = 4;
 
-	for (let c = 0; c < 3; c++) {
-		for (let by = 0; by < height; by += blockSize) {
-			for (let bx = 0; bx < width; bx += blockSize) {
-				const block: number[] = [];
-				const positions: { x: number; y: number }[] = [];
+	for (let by = 0; by < height; by += blockSize) {
+		for (let bx = 0; bx < width; bx += blockSize) {
+			const luminanceBlock: number[] = [];
+			const pixelInfo: Array<{
+				x: number;
+				y: number;
+				idx: number;
+				rgb: [number, number, number];
+			}> = [];
 
-				for (let y = by; y < Math.min(by + blockSize, height); y++) {
-					for (let x = bx; x < Math.min(bx + blockSize, width); x++) {
-						const idx = (y * width + x) * channels + c;
-						block.push(signal[idx] / 255);
-						positions.push({ x, y });
-					}
-				}
+			for (let y = by; y < Math.min(by + blockSize, height); y++) {
+				for (let x = bx; x < Math.min(bx + blockSize, width); x++) {
+					const idx = (y * width + x) * 4;
 
-				const mean = block.reduce((a, b) => a + b, 0) / block.length;
-				const variance =
-					block.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / block.length;
+					const r = signal[idx];
+					const g = signal[idx + 1];
+					const b = signal[idx + 2];
 
-				const signalVariance = Math.max(0, variance - relativeNoiseLevel);
-				const gain =
-					signalVariance / (signalVariance + relativeNoiseLevel + 1e-10);
+					const yVal = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
 
-				for (let i = 0; i < positions.length; i++) {
-					const { x, y } = positions[i];
-					const idx = (y * width + x) * channels + c;
-					const filteredValue = mean + gain * (block[i] - mean);
-					result[idx] = Math.round(
-						Math.max(0, Math.min(1, filteredValue)) * 255
-					);
+					luminanceBlock.push(yVal);
+					pixelInfo.push({ x, y, idx, rgb: [r, g, b] });
 				}
 			}
-		}
-	}
 
-	// альфа-канал
-	for (let y = 0; y < height; y++) {
-		for (let x = 0; x < width; x++) {
-			const idx = (y * width + x) * channels + 3;
-			result[idx] = signal[idx];
+			const mean =
+				luminanceBlock.reduce((a, b) => a + b, 0) / luminanceBlock.length;
+			const variance =
+				luminanceBlock.reduce((a, b) => a + Math.pow(b - mean, 2), 0) /
+				luminanceBlock.length;
+
+			const signalVariance = Math.max(0, variance - sigma);
+			const gain = signalVariance / (signalVariance + sigma + 1e-10);
+
+			for (let i = 0; i < pixelInfo.length; i++) {
+				const { idx, rgb } = pixelInfo[i];
+				const originalY = luminanceBlock[i];
+
+				const filteredY = mean + gain * (originalY - mean);
+				const clampedY = Math.max(0, Math.min(1, filteredY));
+
+				const scale = originalY > 1e-6 ? clampedY / originalY : 1;
+				const clampedScale = Math.max(0, Math.min(2.0, scale));
+
+				result[idx] = Math.max(
+					0,
+					Math.min(255, Math.round(rgb[0] * clampedScale))
+				);
+				result[idx + 1] = Math.max(
+					0,
+					Math.min(255, Math.round(rgb[1] * clampedScale))
+				);
+				result[idx + 2] = Math.max(
+					0,
+					Math.min(255, Math.round(rgb[2] * clampedScale))
+				);
+				result[idx + 3] = signal[idx + 3]; // Alpha без изменений
+			}
 		}
 	}
 
 	return result;
 }
+
+// [!SECTION/> !Изображения

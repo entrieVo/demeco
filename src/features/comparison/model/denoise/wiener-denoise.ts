@@ -1,7 +1,13 @@
 import { cloneFloat32Array } from "../utils/audio-processing";
 import { fft, Complex, ifft } from "../utils/fft";
-import { computeAudioVariance, computeImageVariance } from "../utils/normalize";
+import { computeDenoiseVariance } from "../utils/normalize";
+import {
+	computeAudioSignalPower,
+	computeImageSignalPower,
+} from "../utils/probability_tools";
 import { hannWindow, binProps, createSpectrum } from "../utils/stft";
+
+const MIN_GAIN = 0.2;
 
 export async function wienerDenoise(
 	signal: Float32Array[],
@@ -25,14 +31,9 @@ export async function wienerDenoise(
 		Array.isArray(signal) &&
 		signal.every((item) => item instanceof Float32Array)
 	)
-		return audioWienerFilter(signal, computeAudioVariance(relativeNoiseLevel));
+		return audioWienerFilter(signal, relativeNoiseLevel);
 	else if (signal instanceof Uint8ClampedArray && width && height)
-		return imageWienerFilter(
-			signal,
-			computeImageVariance(relativeNoiseLevel),
-			width,
-			height
-		);
+		return imageWienerFilter(signal, relativeNoiseLevel, width, height);
 
 	return signal;
 }
@@ -43,26 +44,28 @@ function audioWienerFilter(
 	signal: Float32Array[],
 	relativeNoiseLevel: number
 ): Float32Array[] {
+	const sigma = computeDenoiseVariance(
+		relativeNoiseLevel,
+		computeAudioSignalPower(signal)
+	);
 	const frameSize = 512;
-	const windowGain = 0.375;
-	const fftScalingFactor = frameSize * windowGain;
-
-	const noiseVarianceFreq = relativeNoiseLevel * fftScalingFactor;
+	const windowEnergy = frameSize * 0.375;
+	const noiseVarianceFreq = sigma * windowEnergy;
 
 	return stft(signal, noiseVarianceFreq);
 }
 
 function wienerFilter(
 	amplitude: Float32Array,
-	relativeNoiseLevel: number,
-	minGain: number = 0.02
+	noiseVariance: number,
+	minGain: number = MIN_GAIN
 ): Float32Array {
 	const N = amplitude.length;
 	const filtered = new Float32Array(N);
 
 	for (let k = 0; k < N; k++) {
-		const signalPower = amplitude[k] ** 2;
-		const wienerGain = signalPower / (signalPower + relativeNoiseLevel);
+		const signalPower = Math.max(0, amplitude[k] ** 2 - noiseVariance);
+		const wienerGain = signalPower / (signalPower + noiseVariance);
 		const clampedGain = Math.max(minGain, Math.min(1, wienerGain));
 
 		filtered[k] = clampedGain * amplitude[k];
@@ -135,98 +138,72 @@ function stft(signal: Float32Array[], sigma: number): Float32Array[] {
 
 function imageWienerFilter(
 	signal: Uint8ClampedArray,
-	sigma: number,
+	relativeNoiseLevel: number,
 	width: number,
 	height: number
 ): Uint8ClampedArray {
+	const sigma = computeDenoiseVariance(
+		relativeNoiseLevel,
+		computeImageSignalPower(signal)
+	);
 	const windowRadius = 2;
 	const filteredSignal = new Uint8ClampedArray(signal.length);
 
-	for (let channelOffset = 0; channelOffset < 3; channelOffset++) {
-		for (let y = 0; y < height; y++) {
-			for (let x = 0; x < width; x++) {
-				const { mean, variance } = calculateLocalStats(
-					signal,
-					x,
-					y,
-					width,
-					height,
-					windowRadius,
-					channelOffset
-				);
-
-				const pixelIndex = y * width + x;
-				const arrayIndex = pixelIndex * 4 + channelOffset;
-				const currentValue = signal[arrayIndex];
-
-				const filteredValue = applyWienerToPixel(
-					currentValue,
-					mean,
-					variance,
-					sigma
-				);
-
-				filteredSignal[arrayIndex] = filteredValue;
-			}
-		}
-	}
-
 	for (let y = 0; y < height; y++) {
 		for (let x = 0; x < width; x++) {
-			const pixelIndex = y * width + x;
-			const srcAlphaIndex = pixelIndex * 4 + 3;
-			const dstAlphaIndex = pixelIndex * 4 + 3;
-			filteredSignal[dstAlphaIndex] = signal[srcAlphaIndex];
+			const idx = (y * width + x) * 4;
+
+			const originalY =
+				(0.299 * signal[idx] +
+					0.587 * signal[idx + 1] +
+					0.114 * signal[idx + 2]) /
+				255;
+
+			const { mean, variance } = calculateLocalStatsY(
+				signal,
+				x,
+				y,
+				width,
+				height,
+				windowRadius
+			);
+
+			const signalVariance = Math.max(0, variance - sigma);
+			const wienerGain = signalVariance / (signalVariance + sigma + 1e-10);
+			const clampedGain = Math.max(MIN_GAIN, Math.min(1, wienerGain));
+
+			const filteredY = mean + clampedGain * (originalY - mean);
+			const clampedY = Math.max(0, Math.min(1, filteredY));
+
+			const scale = originalY > 1e-6 ? clampedY / originalY : 1;
+			const clampedScale = Math.max(0, Math.min(2.0, scale));
+
+			filteredSignal[idx] = Math.max(
+				0,
+				Math.min(255, Math.round(signal[idx] * clampedScale))
+			);
+			filteredSignal[idx + 1] = Math.max(
+				0,
+				Math.min(255, Math.round(signal[idx + 1] * clampedScale))
+			);
+			filteredSignal[idx + 2] = Math.max(
+				0,
+				Math.min(255, Math.round(signal[idx + 2] * clampedScale))
+			);
+			filteredSignal[idx + 3] = signal[idx + 3]; // Alpha
 		}
 	}
 
 	return filteredSignal;
 }
 
-function applyWienerToPixel(
-	currentValue: number,
-	localMean: number,
-	localVariance: number,
-	sigma: number,
-	minGain: number = 0.05
-): number {
-	const signalVariance = Math.max(0, localVariance - sigma);
-	const wienerGain = signalVariance / (signalVariance + sigma);
-	const clampedGain = Math.max(minGain, Math.min(1, wienerGain));
-
-	return localMean + clampedGain * (currentValue - localMean);
-}
-
-function getChannelSafe(
-	img: Uint8ClampedArray,
-	x: number,
-	y: number,
-	width: number,
-	height: number,
-	channelOffset: number
-): number {
-	x = Math.max(
-		0,
-		Math.min(width - 1, x < 0 ? -x : x >= width ? 2 * width - x - 2 : x)
-	);
-	y = Math.max(
-		0,
-		Math.min(height - 1, y < 0 ? -y : y >= height ? 2 * height - y - 2 : y)
-	);
-
-	const pixelIndex = y * width + x;
-	const arrayIndex = pixelIndex * 4 + channelOffset;
-	return img[arrayIndex];
-}
-
-function calculateLocalStats(
+function calculateLocalStatsY(
 	img: Uint8ClampedArray,
 	centerX: number,
 	centerY: number,
 	width: number,
 	height: number,
-	radius: number,
-	channelOffset: number
+	radius: number
 ): { mean: number; variance: number } {
 	let sum = 0;
 	let sumSq = 0;
@@ -234,19 +211,15 @@ function calculateLocalStats(
 
 	for (let dy = -radius; dy <= radius; dy++) {
 		for (let dx = -radius; dx <= radius; dx++) {
-			const x = centerX + dx;
-			const y = centerY + dy;
+			const x = Math.max(0, Math.min(width - 1, centerX + dx));
+			const y = Math.max(0, Math.min(height - 1, centerY + dy));
 
-			const pixelValue = getChannelSafe(
-				img,
-				x,
-				y,
-				width,
-				height,
-				channelOffset
-			);
-			sum += pixelValue;
-			sumSq += pixelValue;
+			const idx = (y * width + x) * 4;
+			const yVal =
+				(0.299 * img[idx] + 0.587 * img[idx + 1] + 0.114 * img[idx + 2]) / 255;
+
+			sum += yVal;
+			sumSq += yVal * yVal;
 			count++;
 		}
 	}

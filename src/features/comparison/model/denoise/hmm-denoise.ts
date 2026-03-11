@@ -33,13 +33,19 @@ export async function hmmDenoise(
 	else if (signal instanceof Uint8ClampedArray && width && height)
 		return imageHmmFilter(
 			signal,
-			computeHmmImageVariance(signal, relativeNoiseLevel),
+			computeHmmImageVariance(signal, relativeNoiseLevel, width, height),
 			width,
 			height
 		);
 
 	return signal;
 }
+
+const LOG_LIK_MIN = -50;
+const LOG_LIK_MAX = 50;
+const LOG_DIFF_MIN = -5;
+const LOG_DIFF_MAX = 5;
+
 // [SECTION/> Аудио
 
 function audioHmmFilter(
@@ -49,39 +55,47 @@ function audioHmmFilter(
 	return stft(signal, noiseVariance);
 }
 
-export function stft(
-	signal: Float32Array[],
-	noiseVariance: number
-): Float32Array[] {
+function stft(signal: Float32Array[], noiseVariance: number): Float32Array[] {
 	const frameSize = 512;
 	const hopSize = Math.floor(frameSize / 2);
+	const pad = Math.floor(frameSize / 2);
 
 	return signal.map((channel) => {
+		const size = channel.length;
+		const data = cloneFloat32Array(channel);
+
+		const paddedSize = size + pad * 2;
+		const padded = new Float32Array(paddedSize);
+		padded.set(data, pad);
+
+		const windowSum = new Float32Array(paddedSize);
+		const result = new Float32Array(paddedSize);
+
 		const hmmState = createHMMState(hopSize + 1);
 
-		const data = cloneFloat32Array(channel);
-		const size = data.length;
-		const windowSum = new Float32Array(size);
+		const numFrames = Math.ceil((paddedSize - frameSize) / hopSize) + 1;
 
-		const result = new Float32Array(size);
-
-		for (let i = 0; i * hopSize < size; i++) {
+		for (let i = 0; i < numFrames; i++) {
 			const start = i * hopSize;
 
-			for (let j = 0; j < frameSize && start + j < size; j++) {
-				windowSum[start + j] +=
-					hannWindow(j, frameSize) * hannWindow(j, frameSize);
-			}
-
 			const frame = new Float32Array(frameSize);
-			for (let j = 0; j < frameSize; j++)
-				frame[j] =
-					start + j < size ? data[start + j] * hannWindow(j, frameSize) : 0;
+
+			for (let j = 0; j < frameSize; j++) {
+				const idx = start + j;
+				const w = hannWindow(j, frameSize);
+
+				if (idx < paddedSize) {
+					frame[j] = padded[idx] * w;
+					windowSum[idx] += w * w;
+				} else {
+					frame[j] = 0;
+				}
+			}
 
 			const spectrum = fft(frame);
 			const { amplitude, phase } = binProps(spectrum);
 
-			const params = estimateHMMParameters(amplitude, noiseVariance);
+			const params = estimateHMMParams(amplitude, noiseVariance);
 			const filteredAmplitude = viterbiStep(amplitude, params, hmmState);
 
 			const filteredSpectrum: Complex[] = createSpectrum(
@@ -92,19 +106,21 @@ export function stft(
 			const timeFrame = ifft(filteredSpectrum);
 
 			for (let j = 0; j < frameSize; j++) {
-				if (start + j < size) {
-					result[start + j] += timeFrame[j] * hannWindow(j, frameSize);
+				const idx = start + j;
+
+				if (idx < paddedSize) {
+					const w = hannWindow(j, frameSize);
+					result[idx] += timeFrame[j] * w;
 				}
 			}
 		}
 
-		for (let i = 0; i < size; i++) {
-			if (windowSum[i] > 0) {
-				result[i] /= windowSum[i];
-			}
+		for (let i = 0; i < paddedSize; i++) {
+			const norm = Math.max(windowSum[i], 1e-8);
+			result[i] /= norm;
 		}
 
-		return result;
+		return result.slice(pad, pad + size);
 	});
 }
 
@@ -123,34 +139,9 @@ function createHMMState(numBins: number): HMMState {
 	};
 }
 
-function estimateHMMParameters(amplitude: Float32Array, noiseVariance: number) {
-	const N = amplitude.length;
-
-	const noiseStd = Math.sqrt(noiseVariance);
-	const muNoise = noiseStd * 0.8;
-	const varNoise = noiseVariance;
-
-	const sortedAmp = Array.from(amplitude).sort((a, b) => b - a);
-	const signalCount = Math.max(1, Math.floor(N * 0.2));
-	const signalAmps = sortedAmp.slice(0, signalCount);
-
-	const muSignal = signalAmps.reduce((s, x) => s + x, 0) / signalCount;
-	const rawVarSignal =
-		signalAmps.reduce((s, x) => s + (x - muSignal) ** 2, 0) / signalCount;
-
-	const varSignal = Math.max(rawVarSignal, varNoise * 8, 1e-10);
-
-	return {
-		muNoise,
-		varNoise,
-		muSignal,
-		varSignal,
-	};
-}
-
 function viterbiStep(
 	amplitude: Float32Array,
-	params: ReturnType<typeof estimateHMMParameters>,
+	params: ReturnType<typeof estimateHMMParams>,
 	hmmState: HMMState,
 	transitionProb: number = 0.9
 ): Float32Array {
@@ -175,27 +166,42 @@ function viterbiStep(
 			params.varSignal
 		);
 
+		const clampedLogLikNoise = Math.max(
+			LOG_LIK_MIN,
+			Math.min(LOG_LIK_MAX, logLikNoise)
+		);
+		const clampedLogLikSignal = Math.max(
+			LOG_LIK_MIN,
+			Math.min(LOG_LIK_MAX, logLikSignal)
+		);
+
 		const deltaNoisePrev = hmmState.initialized ? hmmState.delta[0][k] : 0;
 		const deltaSignalPrev = hmmState.initialized ? hmmState.delta[1][k] : 0;
 
 		const deltaNoise =
 			Math.max(deltaNoisePrev + logStay, deltaSignalPrev + logSwitch) +
-			logLikNoise;
+			clampedLogLikNoise;
 
 		const deltaSignal =
 			Math.max(deltaNoisePrev + logSwitch, deltaSignalPrev + logStay) +
-			logLikSignal;
+			clampedLogLikSignal;
 
-		const isSignal = deltaSignal > deltaNoise;
+		let logDiff = deltaSignal - deltaNoise;
+		logDiff = Math.max(LOG_DIFF_MIN, Math.min(LOG_DIFF_MAX, logDiff));
 
-		filteredAmp[k] = isSignal ? amp : amp * 0.1;
+		const probSignal = 1 / (1 + Math.exp(-logDiff));
+
+		const minGain = 0.1;
+		const gain = minGain + (1 - minGain) * probSignal;
+		filteredAmp[k] = amp * gain;
+
 		hmmState.delta[0][k] = deltaNoise;
 		hmmState.delta[1][k] = deltaSignal;
 	}
 
 	hmmState.initialized = true;
 
-	for (let k = 1; k < numBins - 1; k++) {
+	for (let k = 1; k < N - numBins + 1; k++) {
 		filteredAmp[N - k] = filteredAmp[k];
 	}
 
@@ -211,12 +217,17 @@ function gaussianLogLikelihood(
 	mu: number,
 	variance: number
 ): number {
-	if (variance <= 0) return -Infinity;
+	if (variance <= 0 || !isFinite(variance)) return -Infinity;
+	if (!isFinite(x) || !isFinite(mu)) return -Infinity;
+
+	const diff = x - mu;
+	if (!isFinite(diff)) return -Infinity;
 
 	const logCoeff = -0.5 * Math.log(2 * Math.PI * variance);
-	const logExp = (-0.5 * (x - mu) ** 2) / variance;
+	const logExp = (-0.5 * diff * diff) / variance;
 
-	return logCoeff + logExp;
+	const result = logCoeff + logExp;
+	return isFinite(result) ? result : -Infinity;
 }
 
 function imageHmmFilter(
@@ -260,13 +271,15 @@ function imageHmmFilter(
 
 	const maxFeature = 255;
 	const normalizedFeatures = features.map((x) => x / maxFeature);
-	const normalizedNoiseVariance = noiseVariance / (maxFeature * maxFeature); // variance в [0,1]²
+	const normalizedNoiseVariance = noiseVariance / (maxFeature * maxFeature);
 
 	const filteredFeatures = apply2DHMM(
 		normalizedFeatures,
 		blocksX,
 		blocksY,
-		normalizedNoiseVariance
+		normalizedNoiseVariance,
+		0.9,
+		0.1
 	);
 
 	const result = new Uint8ClampedArray(signal.length);
@@ -287,42 +300,27 @@ function imageHmmFilter(
 							0.299 * signal[offset] +
 							0.587 * signal[offset + 1] +
 							0.114 * signal[offset + 2];
+						const targetY = targetMeanUint8;
 
-						const currentYUint8 = currentY;
-						const scale =
-							targetMeanUint8 > 1e-3 ? currentYUint8 / targetMeanUint8 : 1;
+						const yDiff = targetY - currentY;
 
-						const attenuation = 0.2;
-						let gain = scale > 1 ? 1 : scale + attenuation * (1 - scale);
-						if (targetMean < 0.05) gain = 0.1;
-
-						const diff = currentYUint8 - targetMeanUint8;
-						const correctedY = targetMeanUint8 + diff * attenuation;
-
-						const rFactor = 0.299 / (0.299 + 0.587 + 0.114);
-						const gFactor = 0.587 / 1.0;
-						const bFactor = 0.114 / 1.0;
-
-						result[offset] = Math.min(
-							255,
-							Math.max(
-								0,
-								signal[offset] + (correctedY - currentYUint8) * rFactor
-							)
+						const maxChange = 30;
+						const clampedDiff = Math.max(
+							-maxChange,
+							Math.min(maxChange, yDiff)
 						);
-						result[offset + 1] = Math.min(
-							255,
-							Math.max(
-								0,
-								signal[offset + 1] + (correctedY - currentYUint8) * gFactor
-							)
+
+						result[offset] = Math.max(
+							0,
+							Math.min(255, signal[offset] + clampedDiff * 0.299)
 						);
-						result[offset + 2] = Math.min(
-							255,
-							Math.max(
-								0,
-								signal[offset + 2] + (correctedY - currentYUint8) * bFactor
-							)
+						result[offset + 1] = Math.max(
+							0,
+							Math.min(255, signal[offset + 1] + clampedDiff * 0.587)
+						);
+						result[offset + 2] = Math.max(
+							0,
+							Math.min(255, signal[offset + 2] + clampedDiff * 0.114)
 						);
 						result[offset + 3] = signal[offset + 3];
 					}
@@ -338,27 +336,29 @@ function apply2DHMM(
 	features: Float32Array,
 	blocksX: number,
 	blocksY: number,
-	noiseVariance: number
+	noiseVariance: number,
+	transitionProb: number = 0.9,
+	minGain: number = 0.1
 ): Float32Array {
 	const totalBlocks = blocksX * blocksY;
 	const filtered = new Float32Array(totalBlocks);
 
-	const params = estimateImageHMMParams(features, noiseVariance);
+	const params = estimateHMMParams(features, noiseVariance, true);
 
 	const delta: Float32Array[] = [
-		new Float32Array(totalBlocks).fill(0),
-		new Float32Array(totalBlocks).fill(0),
+		new Float32Array(totalBlocks).fill(-Infinity),
+		new Float32Array(totalBlocks).fill(-Infinity),
 	];
 
-	const logStay = Math.log(0.9);
-	const logSwitch = Math.log(0.1);
+	const logStay = Math.log(transitionProb);
+	const logSwitch = Math.log(1 - transitionProb);
 
 	for (let d = 0; d < blocksX + blocksY - 1; d++) {
 		for (let by = 0; by < blocksY; by++) {
 			const bx = d - by;
 			if (bx < 0 || bx >= blocksX) continue;
-			const idx = by * blocksX + bx;
 
+			const idx = by * blocksX + bx;
 			const amp = features[idx];
 
 			const logLikNoise = gaussianLogLikelihood(
@@ -372,6 +372,15 @@ function apply2DHMM(
 				params.varSignal
 			);
 
+			const clampedLogLikNoise = Math.max(
+				LOG_LIK_MIN,
+				Math.min(LOG_LIK_MAX, logLikNoise)
+			);
+			const clampedLogLikSignal = Math.max(
+				LOG_LIK_MIN,
+				Math.min(LOG_LIK_MAX, logLikSignal)
+			);
+
 			const topIdx = (by - 1) * blocksX + bx;
 			const leftIdx = by * blocksX + (bx - 1);
 
@@ -379,68 +388,52 @@ function apply2DHMM(
 			let bestDeltaSignal = -Infinity;
 
 			if (by > 0) {
-				bestDeltaNoise = Math.max(bestDeltaNoise, delta[0][topIdx] + logStay);
-				bestDeltaSignal = Math.max(bestDeltaSignal, delta[1][topIdx] + logStay);
-			}
-			if (bx > 0) {
-				bestDeltaNoise = Math.max(bestDeltaNoise, delta[0][leftIdx] + logStay);
-				bestDeltaSignal = Math.max(
-					bestDeltaSignal,
-					delta[1][leftIdx] + logStay
+				bestDeltaNoise = Math.max(
+					bestDeltaNoise,
+					delta[0][topIdx] + logStay,
+					delta[1][topIdx] + logSwitch
 				);
-			}
-			if (by > 0) {
-				bestDeltaNoise = Math.max(bestDeltaNoise, delta[1][topIdx] + logSwitch);
 				bestDeltaSignal = Math.max(
 					bestDeltaSignal,
+					delta[1][topIdx] + logStay,
 					delta[0][topIdx] + logSwitch
 				);
 			}
+
 			if (bx > 0) {
 				bestDeltaNoise = Math.max(
 					bestDeltaNoise,
+					delta[0][leftIdx] + logStay,
 					delta[1][leftIdx] + logSwitch
 				);
 				bestDeltaSignal = Math.max(
 					bestDeltaSignal,
+					delta[1][leftIdx] + logStay,
 					delta[0][leftIdx] + logSwitch
 				);
 			}
 
 			if (by === 0 && bx === 0) {
-				bestDeltaNoise = logLikNoise;
-				bestDeltaSignal = logLikSignal;
+				bestDeltaNoise = 0;
+				bestDeltaSignal = 0;
 			}
 
-			delta[0][idx] = bestDeltaNoise + logLikNoise;
-			delta[1][idx] = bestDeltaSignal + logLikSignal;
+			delta[0][idx] = bestDeltaNoise + clampedLogLikNoise;
+			delta[1][idx] = bestDeltaSignal + clampedLogLikSignal;
 
-			const isSignal = delta[1][idx] > delta[0][idx];
-			const gain = isSignal ? 1 : 0.2; // как в аудио
+			const logDiff = delta[1][idx] - delta[0][idx];
+			const clampedLogDiff = Math.max(
+				LOG_DIFF_MIN,
+				Math.min(LOG_DIFF_MAX, logDiff)
+			);
+			const probSignal = 1 / (1 + Math.exp(-clampedLogDiff));
+
+			const gain = minGain + (1 - minGain) * probSignal;
 			filtered[idx] = amp * gain;
 		}
 	}
 
 	return filtered;
-}
-
-function estimateImageHMMParams(features: Float32Array, noiseVariance: number) {
-	const N = features.length;
-
-	const noiseStd = Math.sqrt(noiseVariance);
-	const muNoise = Math.max(1e-4, noiseStd * 0.8);
-	const varNoise = Math.max(1e-8, noiseVariance);
-
-	const sorted = Array.from(features).sort((a, b) => b - a);
-	const signalCount = Math.max(1, Math.floor(N * 0.2));
-	const signalAmps = sorted.slice(0, signalCount);
-
-	const muSignal = signalAmps.reduce((s, x) => s + x, 0) / signalCount;
-	const rawVarSignal =
-		signalAmps.reduce((s, x) => s + (x - muSignal) ** 2, 0) / signalCount;
-	const varSignal = Math.max(rawVarSignal, varNoise * 8);
-
-	return { muNoise, varNoise, muSignal, varSignal };
 }
 
 // [!SECTION/> !Изображение
@@ -455,12 +448,14 @@ function computeHmmAudioVariance(
 	const frameSize = 512;
 	const hopSize = Math.floor(frameSize / 2);
 
-	// Собираем амплитуды спектра для оценки мощности сигнала
 	const spectrumSamples: number[] = [];
-	const maxFrames = Math.min(20, Math.floor(channels[0].length / hopSize));
 
 	for (const ch of channels) {
-		for (let f = 0; f < maxFrames; f++) {
+		const numFrames = Math.max(
+			1,
+			Math.floor((ch.length - frameSize) / hopSize) + 1
+		);
+		for (let f = 0; f < numFrames; f++) {
 			const start = f * hopSize;
 			const frame = new Float32Array(frameSize);
 
@@ -486,27 +481,107 @@ function computeHmmAudioVariance(
 	return Math.max(noiseVariance, 1e-10);
 }
 
+// ✅ Новая сигнатура и логика:
 function computeHmmImageVariance(
 	signal: Uint8ClampedArray,
-	relativeNoiseLevel: number
+	relativeNoiseLevel: number,
+	width: number,
+	height: number // ← добавить параметры
 ): number {
-	let sumY = 0;
-	let sumY2 = 0;
-	let count = 0;
+	const blockSize = 8;
+	const blocksX = Math.ceil(width / blockSize);
+	const blocksY = Math.ceil(height / blockSize);
 
-	for (let i = 0; i < signal.length; i += 4) {
-		const y = 0.299 * signal[i] + 0.587 * signal[i + 1] + 0.114 * signal[i + 2];
-		sumY += y;
-		sumY2 += y * y;
-		count++;
+	const blockFeatures: number[] = [];
+
+	for (let by = 0; by < blocksY; by++) {
+		for (let bx = 0; bx < blocksX; bx++) {
+			let sumY = 0,
+				count = 0;
+			for (let dy = 0; dy < blockSize; dy++) {
+				for (let dx = 0; dx < blockSize; dx++) {
+					const px = bx * blockSize + dx;
+					const py = by * blockSize + dy;
+					if (px < width && py < height) {
+						const offset = (py * width + px) * 4;
+						const y =
+							0.299 * signal[offset] +
+							0.587 * signal[offset + 1] +
+							0.114 * signal[offset + 2];
+						sumY += y;
+						count++;
+					}
+				}
+			}
+			blockFeatures.push(count > 0 ? sumY / count : 0);
+		}
 	}
 
-	if (count === 0) return 1e-10;
-	const meanY = sumY / count;
-	const variance = sumY2 / count - meanY * meanY;
+	const n = blockFeatures.length;
+	if (n === 0) return 1e-10;
 
-	const noiseVariance = variance * Math.pow(10, relativeNoiseLevel / 10);
+	const mean = blockFeatures.reduce((s, x) => s + x, 0) / n;
+	const varianceRaw =
+		blockFeatures.reduce((s, x) => s + (x - mean) ** 2, 0) / n;
+
+	const normalizedVariance = varianceRaw / (255 * 255);
+	const noiseVariance =
+		normalizedVariance * Math.pow(10, relativeNoiseLevel / 10);
+
 	return Math.max(noiseVariance, 1e-10);
+}
+
+function estimateHMMParams(
+	values: Float32Array | number[],
+	noiseVariance: number,
+	isImage: boolean = false
+) {
+	const arr = Array.from(values);
+	arr.sort((a, b) => a - b);
+	const N = arr.length;
+
+	const noiseCount = Math.max(10, Math.floor(N * 0.3));
+	const noiseValues = arr.slice(0, noiseCount);
+	const muNoise = noiseValues.reduce((s, x) => s + x, 0) / noiseCount;
+
+	const noiseDeviations = noiseValues.map((x) => Math.abs(x - muNoise));
+	noiseDeviations.sort((a, b) => a - b);
+	const medianDevNoise =
+		noiseDeviations[Math.floor(noiseDeviations.length / 2)];
+	const varNoise = Math.max(
+		(medianDevNoise / 0.6745) ** 2,
+		noiseVariance,
+		1e-10
+	);
+
+	const signalCount = Math.max(10, Math.floor(N * 0.15));
+	const signalValues = arr.slice(-signalCount);
+	const muSignal = signalValues.reduce((s, x) => s + x, 0) / signalCount;
+
+	const signalDeviations = signalValues.map((x) => Math.abs(x - muSignal));
+	signalDeviations.sort((a, b) => a - b);
+	const medianDevSignal =
+		signalDeviations[Math.floor(signalDeviations.length / 2)];
+	const varSignal = Math.max(
+		(medianDevSignal / 0.6745) ** 2,
+		varNoise * 1.5,
+		1e-10
+	);
+
+	return {
+		muNoise: isImage
+			? Math.max(1e-4, Math.min(muNoise, 0.9))
+			: Math.max(1e-4, muNoise),
+		varNoise: isImage
+			? Math.max(1e-8, Math.min(varNoise, 0.5))
+			: Math.min(varNoise, 1.0),
+		muSignal: isImage
+			? Math.max(muNoise + 0.1, Math.min(muSignal, 1.0))
+			: Math.max(muNoise + 0.05, muSignal),
+		varSignal: isImage
+			? Math.max(varNoise * 2, Math.min(varSignal, 1.0))
+			: Math.min(varSignal, 2.0),
+	};
 }
 
 // [!SECTION/> !Вспомогательные функции

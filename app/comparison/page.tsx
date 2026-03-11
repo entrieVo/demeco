@@ -212,8 +212,3 @@ export default function ComparisonPage() {
 		</div>
 	);
 }
-
-function sliderToSnrDb(sliderValue: number): number {
-	// Линейное преобразование: 0.1 → 30 dB, 1.0 → 0 dB
-	return 30 - ((sliderValue - 0.1) / 0.9) * 30;
-}
