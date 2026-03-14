@@ -1,5 +1,6 @@
-export const VERSION = 0.7;
+export const VERSION = 0.8;
 export const AUTHOR = "Василец Анастасия Вячеславовна";
+export const DEBUG = true;
 
 export const FILE_TYPES = {
 	IMAGE: { FORMAT: "image/png", LABEL: "изображения (png)" },

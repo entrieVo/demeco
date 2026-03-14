@@ -75,7 +75,6 @@ function butterworthFilter(
 	for (let i = 0; i < n; i++) {
 		const x0 = signal[i];
 
-		// y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
 		const y0 = b[0] * x0 + b[1] * x1 + b[2] * x2 - a[1] * y1 - a[2] * y2;
 
 		x2 = x1;
@@ -127,7 +126,6 @@ function gaussianBlur(
 		for (let x = 0; x < imageWidth; x++) {
 			const i = (y * imageWidth + x) * 4;
 
-			// канал rgb
 			for (let c = 0; c < 3; c++) {
 				let sum = 0;
 				let kernelIndex = 0;
@@ -148,7 +146,6 @@ function gaussianBlur(
 				newData[i + c] = Math.max(0, Math.min(255, sum));
 			}
 
-			// значение прозрачности (альфа-канал)
 			newData[i + 3] = data[i + 3];
 		}
 	}

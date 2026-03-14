@@ -25,8 +25,7 @@ export function cloneFloat32Array(arr: Float32Array): Float32Array {
 
 export function encodeWAV(
 	channels: Float32Array[] | null,
-	sampleRate: number,
-	bitDepth = 16
+	sampleRate: number
 ): Blob | null {
 	if (!channels) return null;
 
@@ -35,7 +34,6 @@ export function encodeWAV(
 	const buffer = new ArrayBuffer(44 + length * numChannels * 2);
 	const view = new DataView(buffer);
 
-	// WAV-заголовок (упрощённый, 16-bit PCM)
 	const writeString = (offset: number, str: string) =>
 		[...str].forEach((char, i) =>
 			view.setUint8(offset + i, char.charCodeAt(0))
@@ -45,17 +43,16 @@ export function encodeWAV(
 	view.setUint32(4, 36 + length * numChannels * 2, true);
 	writeString(8, "WAVE");
 	writeString(12, "fmt ");
-	view.setUint32(16, 16, true); // размер подчанка fmt
-	view.setUint16(20, 1, true); // PCM
+	view.setUint32(16, 16, true);
+	view.setUint16(20, 1, true);
 	view.setUint16(22, numChannels, true);
 	view.setUint32(24, sampleRate, true);
 	view.setUint32(28, sampleRate * numChannels * 2, true);
 	view.setUint16(32, numChannels * 2, true);
-	view.setUint16(34, 16, true); // бит на выборку
+	view.setUint16(34, 16, true);
 	writeString(36, "data");
 	view.setUint32(40, length * numChannels * 2, true);
 
-	// Данные
 	let offset = 44;
 	for (let i = 0; i < length; i++) {
 		for (let ch = 0; ch < numChannels; ch++) {

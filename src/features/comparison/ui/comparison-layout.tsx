@@ -1,4 +1,4 @@
-import { AUTHOR, NOISE_TYPES, VERSION } from "@/features/constants";
+import { AUTHOR, VERSION } from "@/features/constants";
 import { NoiseType } from "@/features/constants";
 import { Header } from "@/features/header/header";
 import { Card } from "@/shared/ui/kit/card";
@@ -9,9 +9,7 @@ import { cn } from "@/shared/lib/css";
 import {
 	Select,
 	SelectContent,
-	SelectGroup,
 	SelectItem,
-	SelectLabel,
 	SelectTrigger,
 	SelectValue,
 } from "@/shared/ui/kit/select";

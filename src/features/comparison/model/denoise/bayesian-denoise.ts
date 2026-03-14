@@ -7,6 +7,7 @@ import {
 
 const AUDIO_WINDOW_SIZE = 32;
 const DEFAULT_BLOCK_SIZE = Math.round(AUDIO_WINDOW_SIZE ** 0.5);
+const MIN_GAIN = 0.3;
 
 export async function bayesianDenoise(
 	signal: Float32Array[],
@@ -74,7 +75,8 @@ function audioBayesianFilter(
 			const mean = sum / N;
 			const localVariance = Math.max(0, sumSq / N - mean * mean);
 			const signalVariance = Math.max(0, localVariance - sigma);
-			const gain = signalVariance / (signalVariance + sigma + 1e-10);
+			let gain = signalVariance / (signalVariance + sigma + 1e-10);
+			gain = Math.max(MIN_GAIN, Math.min(1, gain));
 
 			result[i] = mean + gain * (signal[i] - mean);
 
@@ -165,7 +167,7 @@ export async function imageBayesianFilter(
 					0,
 					Math.min(255, Math.round(rgb[2] * clampedScale))
 				);
-				result[idx + 3] = signal[idx + 3]; // Alpha без изменений
+				result[idx + 3] = signal[idx + 3];
 			}
 		}
 	}

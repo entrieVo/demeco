@@ -71,7 +71,6 @@ function wienerFilter(
 		filtered[k] = clampedGain * amplitude[k];
 	}
 
-	// Симметрия спектра (для вещественного сигнала)
 	for (let k = 1; k < N / 2; k++) {
 		filtered[N - k] = filtered[k];
 	}
@@ -190,7 +189,7 @@ function imageWienerFilter(
 				0,
 				Math.min(255, Math.round(signal[idx + 2] * clampedScale))
 			);
-			filteredSignal[idx + 3] = signal[idx + 3]; // Alpha
+			filteredSignal[idx + 3] = signal[idx + 3];
 		}
 	}
 

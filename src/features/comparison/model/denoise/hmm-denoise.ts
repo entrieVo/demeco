@@ -1,6 +1,11 @@
+import { DEBUG } from "@/features/constants";
 import { cloneFloat32Array } from "../utils/audio-processing";
 import { fft, Complex, ifft } from "../utils/fft";
+import { debugLog } from "../utils/metrics";
 import { hannWindow, binProps, createSpectrum } from "../utils/stft";
+
+const MIN_GAIN = 0.3;
+const HMM_VIDEO_BENCHMARK_MODE = false;
 
 export async function hmmDenoise(
 	signal: Float32Array[],
@@ -191,8 +196,7 @@ function viterbiStep(
 
 		const probSignal = 1 / (1 + Math.exp(-logDiff));
 
-		const minGain = 0.1;
-		const gain = minGain + (1 - minGain) * probSignal;
+		const gain = MIN_GAIN + (1 - MIN_GAIN) * probSignal;
 		filteredAmp[k] = amp * gain;
 
 		hmmState.delta[0][k] = deltaNoise;
@@ -279,8 +283,21 @@ function imageHmmFilter(
 		blocksY,
 		normalizedNoiseVariance,
 		0.9,
-		0.1
+		MIN_GAIN
 	);
+
+	if (DEBUG) {
+		const avgOriginal = features.reduce((a, b) => a + b, 0) / features.length;
+		const avgFilteredNormalized =
+			filteredFeatures.reduce((a, b) => a + b, 0) / filteredFeatures.length;
+		const avgFiltered = avgFilteredNormalized * 255;
+
+		debugLog("HMM-Video", "Feature change", {
+			avgOriginal,
+			avgFiltered,
+			relativeChange: Math.abs(avgFiltered - avgOriginal) / avgOriginal,
+		});
+	}
 
 	const result = new Uint8ClampedArray(signal.length);
 	for (let by = 0; by < blocksY; by++) {
@@ -304,25 +321,42 @@ function imageHmmFilter(
 
 						const yDiff = targetY - currentY;
 
-						const maxChange = 30;
-						const clampedDiff = Math.max(
-							-maxChange,
-							Math.min(maxChange, yDiff)
-						);
+						if (HMM_VIDEO_BENCHMARK_MODE) {
+							const scale = currentY > 1e-6 ? targetY / currentY : 1;
+							const clampedScale = Math.max(0.7, Math.min(1.5, scale));
+							result[offset] = Math.max(
+								0,
+								Math.min(255, Math.round(signal[offset] * clampedScale))
+							);
+							result[offset + 1] = Math.max(
+								0,
+								Math.min(255, Math.round(signal[offset + 1] * clampedScale))
+							);
+							result[offset + 2] = Math.max(
+								0,
+								Math.min(255, Math.round(signal[offset + 2] * clampedScale))
+							);
+						} else {
+							const maxChange = 30;
+							const clampedDiff = Math.max(
+								-maxChange,
+								Math.min(maxChange, yDiff)
+							);
 
-						result[offset] = Math.max(
-							0,
-							Math.min(255, signal[offset] + clampedDiff * 0.299)
-						);
-						result[offset + 1] = Math.max(
-							0,
-							Math.min(255, signal[offset + 1] + clampedDiff * 0.587)
-						);
-						result[offset + 2] = Math.max(
-							0,
-							Math.min(255, signal[offset + 2] + clampedDiff * 0.114)
-						);
-						result[offset + 3] = signal[offset + 3];
+							result[offset] = Math.max(
+								0,
+								Math.min(255, signal[offset] + clampedDiff * 0.299)
+							);
+							result[offset + 1] = Math.max(
+								0,
+								Math.min(255, signal[offset + 1] + clampedDiff * 0.587)
+							);
+							result[offset + 2] = Math.max(
+								0,
+								Math.min(255, signal[offset + 2] + clampedDiff * 0.114)
+							);
+							result[offset + 3] = signal[offset + 3];
+						}
 					}
 				}
 			}
@@ -481,12 +515,11 @@ function computeHmmAudioVariance(
 	return Math.max(noiseVariance, 1e-10);
 }
 
-// ✅ Новая сигнатура и логика:
 function computeHmmImageVariance(
 	signal: Uint8ClampedArray,
 	relativeNoiseLevel: number,
 	width: number,
-	height: number // ← добавить параметры
+	height: number
 ): number {
 	const blockSize = 8;
 	const blocksX = Math.ceil(width / blockSize);
@@ -527,6 +560,14 @@ function computeHmmImageVariance(
 	const normalizedVariance = varianceRaw / (255 * 255);
 	const noiseVariance =
 		normalizedVariance * Math.pow(10, relativeNoiseLevel / 10);
+
+	if (DEBUG)
+		debugLog("HMM-Video", "Variance scale", {
+			raw: varianceRaw,
+			normalized: normalizedVariance,
+			noiseVariance,
+			relativeNoiseLevel,
+		});
 
 	return Math.max(noiseVariance, 1e-10);
 }

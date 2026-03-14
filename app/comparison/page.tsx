@@ -1,7 +1,7 @@
 "use client";
 import { useEffect, useState } from "react";
 import ComparisonLayout from "@/features/comparison/ui/comparison-layout";
-import { NOISE_TYPES, NoiseType } from "@/features/constants";
+import { DEBUG, NOISE_TYPES, NoiseType } from "@/features/constants";
 import { Alert, AlertTitle } from "@/shared/ui/kit/alert";
 import { AlertTriangleIcon } from "lucide-react";
 import { gaussianNoise } from "@/features/comparison/model/noise/gaussian-noise";
@@ -19,6 +19,11 @@ import {
 	fileToImageData,
 	imageDataToBlob,
 } from "@/features/comparison/model/utils/image-processing";
+import {
+	calculateAudioMetrics,
+	calculateVideoMetrics,
+	aggregateResults,
+} from "@/features/comparison/model/utils/metrics";
 
 export default function ComparisonPage() {
 	const [imageRef, setImageRef] = useState<File | null>(null);
@@ -33,8 +38,8 @@ export default function ComparisonPage() {
 		NOISE_TYPES.GAUSSIAN
 	);
 	const [noiseParams, setNoiseParams] = useState({
-		noiseVariance: 5,
-		blurStrength: 2,
+		noiseVariance: 0.2,
+		blurStrength: 1.5,
 	});
 	const [selectedDenoise, setSelectedDenoise] = useState<string | null>(null);
 	const [showAlert, setShowAlert] = useState(false);
@@ -76,7 +81,7 @@ export default function ComparisonPage() {
 		let noisedAudioArray: Float32Array[] | null = await cloneChannels(
 				audioBuffer
 			),
-			noisedImageData: Uint8ClampedArray | null = null;
+			noisedImageArray: Uint8ClampedArray | null = null;
 
 		switch (selectedNoise) {
 			case NOISE_TYPES.GAUSSIAN:
@@ -84,7 +89,7 @@ export default function ComparisonPage() {
 					noisedAudioArray,
 					noiseParams.noiseVariance
 				);
-				noisedImageData = await gaussianNoise(
+				noisedImageArray = await gaussianNoise(
 					imageData.data,
 					noiseParams.noiseVariance
 				);
@@ -97,7 +102,7 @@ export default function ComparisonPage() {
 					noiseParams.noiseVariance,
 					noiseParams.blurStrength
 				);
-				noisedImageData = await colorNoise(
+				noisedImageArray = await colorNoise(
 					imageData,
 					noiseParams.noiseVariance,
 					noiseParams.blurStrength
@@ -109,7 +114,7 @@ export default function ComparisonPage() {
 					noisedAudioArray,
 					noiseParams.noiseVariance
 				);
-				noisedImageData = await impulseNoise(
+				noisedImageArray = await impulseNoise(
 					imageData.data,
 					noiseParams.noiseVariance
 				);
@@ -118,10 +123,10 @@ export default function ComparisonPage() {
 				break;
 		}
 
-		if (!noisedAudioArray || !noisedImageData) return;
+		if (!noisedAudioArray || !noisedImageArray) return;
 
 		audioBlob = encodeWAV(noisedAudioArray, audioBuffer.sampleRate);
-		imageBlob = await imageDataToBlob(imageData, noisedImageData);
+		imageBlob = await imageDataToBlob(imageData, noisedImageArray);
 
 		setNoisedImage(imageBlob);
 		setNoisedAudio(audioBlob);
@@ -141,7 +146,7 @@ export default function ComparisonPage() {
 			noiseParams.noiseVariance
 		);
 		const denoisedImageData = await denoiseFunc(
-			noisedImageData,
+			noisedImageArray,
 			noiseParams.noiseVariance,
 			imageData.width,
 			imageData.height
@@ -149,13 +154,43 @@ export default function ComparisonPage() {
 
 		setDenoisedAudio(encodeWAV(denoisedAudio, audioBuffer.sampleRate));
 		setDenoisedImage(await imageDataToBlob(imageData, denoisedImageData));
+
+		if (DEBUG) {
+			const audioResults = calculateAudioMetrics(
+				await cloneChannels(audioBuffer),
+				noisedAudioArray,
+				denoisedAudio
+			);
+
+			console.log("Audio improvement:", audioResults.improvement);
+
+			const videoResults = calculateVideoMetrics(
+				imageData.data,
+				noisedImageArray,
+				denoisedImageData,
+				imageData.width,
+				imageData.height
+			);
+
+			console.log("Video improvement:", videoResults.improvement);
+
+			const allResults = [audioResults, videoResults];
+			const summary = aggregateResults(allResults);
+
+			console.log(
+				"Mean ΔSNR:",
+				summary["ΔSNR"].mean,
+				"±",
+				summary["ΔSNR"].stdDev
+			);
+		}
 	};
 
 	const onSigmaChange = (value: number[]) => {
 		setNoiseParams((params) => {
 			return {
 				...params,
-				noiseVariance: /* sliderToSnrDb */ value[0],
+				noiseVariance: value[0],
 			};
 		});
 	};
