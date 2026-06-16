@@ -47,8 +47,8 @@ export function addNoise<T extends AudiobufferData | ImageData>(
 			sampleRate,
 		} as unknown as T;
 	} else {
-		const { width, height, colorSpace } = signal as ImageData;
-		noisedSignal = new ImageData(width, height, { colorSpace }) as unknown as T;
+		const { width, height } = signal as ImageData;
+		noisedSignal = new ImageData(width, height) as unknown as T;
 		(noisedSignal.data as ImageDataArray).set(noisedData as Uint8ClampedArray);
 	}
 
@@ -82,10 +82,8 @@ export function denoiseSignal<T extends AudiobufferData | ImageData>(
 			sampleRate,
 		} as unknown as T;
 	} else if ("width" in signal) {
-		const { width, height, colorSpace } = signal as ImageData;
-		denoisedSignal = new ImageData(width, height, {
-			colorSpace,
-		}) as unknown as T;
+		const { width, height } = signal as ImageData;
+		denoisedSignal = new ImageData(width, height) as unknown as T;
 		(denoisedSignal.data as ImageDataArray).set(
 			denoisedData as Uint8ClampedArray,
 		);

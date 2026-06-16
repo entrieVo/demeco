@@ -22,18 +22,18 @@ export function DenoisedShowcase({
 	if (!denoised) return;
 
 	return (
-		<div className={twMerge(`flex flex-col sm:flex-row gap-5`, className)}>
-			{Object.entries(denoised).map(([filter, signal], i) => (
-				<div key={i}>
+		<div
+			className={twMerge(
+				`flex flex-col gap-5`,
+				type === "audio" ? "sm:flex-row" : "",
+				className,
+			)}>
+			{Object.entries(denoised).map(([filter, signal]) => (
+				<div key={filter}>
 					<SignalPreview
 						signal={signal}
 						type={type}
-						className={
-							type === "audio"
-								? `flex-col flex-1/3`
-								: `sm:[grid-template-areas:'child'_'preview'_'hist']
-								sm:grid-cols-1 sm:grid-rows-[0.1fr_1.5fr_1fr] grid-rows-[0.1fr_2fr_1fr]`
-						}>
+						className={type === "audio" ? `flex-col flex-1/3` : ``}>
 						<Title
 							variant="sm"
 							className={`min-h-10 flex justify-center items-center text-center`}>
