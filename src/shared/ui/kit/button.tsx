@@ -1,28 +1,21 @@
-import clsx from "clsx";
+import { twMerge } from "tailwind-merge";
 
 interface ButtonProps {
-	onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
-	icon?: React.ReactNode;
-	label: string;
+	children: React.ReactNode;
+	onClick?: () => void;
 	className?: string;
 }
 
-export default function Button({
-	icon,
-	label,
-	onClick,
-	className,
-}: ButtonProps) {
+export function Button({ children, onClick, className }: ButtonProps) {
 	return (
-		<div className={clsx("w-full md:w-auto", className)}>
+		<div className={className}>
 			<button
 				onClick={onClick}
-				className={`px-3 py-2 rounded-md w-full cursor-pointer
-					flex flex-row justify-center items-center
-					border-3 border-[rgba(var(--blue),.2)]
-					font-semibold text-blue`}>
-				<div className={`pr-3 max-h-5 max-w-8`}>{icon && icon}</div>
-				{label}
+				className={twMerge(
+					`block w-40 bg-md-gray py-1 rounded-xl cursor-pointer`,
+					className,
+				)}>
+				{children}
 			</button>
 		</div>
 	);

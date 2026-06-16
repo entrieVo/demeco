@@ -9,6 +9,10 @@
 	--light-blue: 64, 110, 197; /* #406ec5 */
 	--soft-gray: 241, 243, 247; /* #f1f3f7 */
 	--smoky-blue: 248, 249, 250; /* #f8f9fa */
+	--md-gray: 227, 231, 237; /* #e3e7ed */
+	--green: 41, 191, 18; /* #29bf12 */
+	--sky-blue: 61, 145, 231; /* #3d91e7 */
+	--red: 246, 69, 44; /* #f6452c */
 
 	/* --font-hikasami: */
 }
@@ -34,6 +38,10 @@
 	--color-smoky-blue: rgb(var(--smoky-blue));
 	--color-blue: rgb(var(--blue));
 	--color-light-blue: rgb(var(--light-blue));
+	--color-md-gray: rgb(var(--md-gray));
+	--color-green: rgb(var(--green));
+	--color-sky-blue: rgb(var(--sky-blue));
+	--color-red: rgb(var(--red));
 }
 
 body {

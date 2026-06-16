@@ -1,13 +1,15 @@
 interface IconProps {
 	size?: number;
+	className?: string;
 }
 
-export default function GitHubIcon({ size = 50 }: IconProps) {
+export default function GitHubIcon({ className, size = 50 }: IconProps) {
 	const iconSize = `${size}px`;
 	return (
 		<svg
 			width={iconSize}
 			height={iconSize}
+			className={className}
 			viewBox="0 0 24 24"
 			fill="none"
 			xmlns="http://www.w3.org/2000/svg">

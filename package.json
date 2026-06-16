@@ -12,6 +12,7 @@
 		"@radix-ui/react-select": "^2.2.6",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
+		"katex": "^0.17.0",
 		"kissfft-js": "^0.1.8",
 		"lucide-react": "^0.563.0",
 		"next": "16.1.4",
@@ -19,7 +20,7 @@
 		"radix-ui": "^1.4.3",
 		"react": "19.2.3",
 		"react-dom": "19.2.3",
-		"tailwind-merge": "^3.4.0"
+		"tailwind-merge": "^3.6.0"
 	},
 	"devDependencies": {
 		"@tailwindcss/postcss": "^4",
